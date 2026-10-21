@@ -1,0 +1,27 @@
+# Ray Tune HPO showcase workload for the Databricks AI Runtime (`air` CLI).
+# Rendered by jobs/tune_launcher.py. Narrative/showcase (NOT in the daily pipeline):
+# ASHA early-stopping sweep, 1 GPU per trial, {{TUNE_GPUS}} concurrent trials.
+experiment_name: {{EXPERIMENT_NAME}}
+environment:
+  version: 'databricks_ai_v5'
+  dependencies:
+    - fsspec>=2024.6.1
+    - mlflow>=3.0
+compute:
+  num_accelerators: {{TUNE_GPUS}}
+  accelerator_type: {{GPU_TYPE}}
+code_source:
+  type: snapshot
+  snapshot:
+    root_path: {{REPO_ROOT}}
+command: |
+  cd $CODE_SOURCE_PATH
+  export RECO_CATALOG="{{RECO_CATALOG}}"
+  export RECO_SCHEMA="{{RECO_SCHEMA}}"
+  export PYTHONPATH="$CODE_SOURCE_PATH/src:$CODE_SOURCE_PATH/jobs/tune:$PYTHONPATH"
+  export RAY_ENTRYPOINT="jobs/tune/tune_ray.py"
+  bash jobs/train_multinode/ray_bootstrap.sh
+max_retries: 0
+timeout_minutes: 60
+env_variables:
+  NCCL_SOCKET_IFNAME: eth0

@@ -1,0 +1,235 @@
+# The offer-recommender pipeline as two jobs, all on SERVERLESS (client 5). The
+# workspace is serverless-ONLY (Terraform rejects classic: "Only serverless
+# compute is supported in the workspace"), so preprocess cannot escape the
+# serverless Spark Connect ML per-model cap by moving to classic -- see
+# jobs/preprocess.py for how it stays under the cap.
+#
+# 1. offer_recommender_pipeline (the daily "hero"): generate data -> preprocess
+#    (SparkML fit + transform) -> distributed training
+#    -> publish offline features -> deploy serving.
+#
+# 2. offer_recommender_realtime_stream (always-on "Workload 2"): streams
+#    synthetic session events into the real-time feature SOURCE Delta table; the
+#    TableTrigger Feature View materialization (publish_features) syncs each
+#    commit to the Lakebase online store for serving.
+#
+# The DAB-resolved [catalog, schema] are passed as task parameters so nothing
+# hardcodes the per-target UC location (config.configure_from_argv reads them).
+
+resources:
+  jobs:
+    offer_recommender_pipeline:
+      name: "[${bundle.target}] offer-recommender pipeline"
+      tasks:
+        - task_key: generate_data
+          environment_key: default
+          spark_python_task:
+            python_file: ../jobs/generate_data.py
+            # argv: catalog, schema, session_end_ts (unix seconds, pinned for
+            # identical window bounds across generate_data + setup_stream runs).
+            parameters:
+              - ${var.catalog}
+              - ${resources.schemas.offer_recommender_schema.name}
+              - ${var.session_end_ts}
+
+        # Create the Kafka login SFV + append the backfill DIRECTLY into
+        # match_events (record_source='backfill'), so preprocess's streaming PIT
+        # join sees real rolling-window history. We do the backfill as a plain
+        # synchronous Spark append (NOT the managed StreamBackfillSource MERGE, which
+        # is async + opaque). Sits between generate_data (writes session_window_bounds
+        # + players) and preprocess (reads match_events), so ordering is guaranteed.
+        - task_key: setup_stream
+          depends_on:
+            - task_key: generate_data
+          environment_key: default
+          spark_python_task:
+            python_file: ../jobs/setup_stream.py
+            # argv: catalog, schema, kafka_bootstrap, session_end_ts, fs_reset,
+            # kafka_uc_connection. session_end_ts must match generate_data's value so
+            # both compute IDENTICAL window bounds. fs_reset (default false) gates the
+            # stream DELETE+recreate: a daily run reuses the live stream; only an
+            # explicit rebuild recreates it. kafka_uc_connection (6th, optional): when
+            # set, create_match_stream authenticates the SFV to Event Hubs via the UC
+            # Kafka connection (SASL) instead of mTLS. setup_stream is the ONLY creator
+            # of the stream, so only it needs this (preprocess/publish_features reuse).
+            parameters:
+              - ${var.catalog}
+              - ${resources.schemas.offer_recommender_schema.name}
+              - ${var.kafka_bootstrap}
+              - ${var.session_end_ts}
+              - ${var.fs_reset}
+              - ${var.kafka_uc_connection}
+
+        - task_key: preprocess
+          depends_on:
+            - task_key: setup_stream
+          environment_key: default
+          spark_python_task:
+            python_file: ../jobs/preprocess.py
+            # Param layout mirrors publish_features: [catalog, schema, fs_reset,
+            # kafka_bootstrap].
+            # 3rd param: FS reset flag (--var fs_reset=true). On reset,
+            # create_login_stream DELETE+recreates the login stream, so preprocess
+            # must clear the stale streaming Features that still bind the old stream
+            # (else get_feature returns a dangling-full_name Feature -> _from_sdk
+            # ValueError). Default false = daily re-run reuses existing Features.
+            # 4th param: OPTIONAL Kafka bootstrap (host:port). Required at runtime
+            # now that preprocess PIT-joins the streaming Feature View into the
+            # training table (the 5 rolling-window features are no longer on the
+            # impression log). Deploy with --var kafka_bootstrap=<broker host:port>.
+            parameters:
+              - ${var.catalog}
+              - ${resources.schemas.offer_recommender_schema.name}
+              - ${var.fs_reset}
+              - ${var.kafka_bootstrap}
+
+        # Distributed Ray Train on serverless GPU (AI Runtime), via the `air` CLI.
+        # A plain serverless spark_python_task (NOT a GPU task): it ensures
+        # `databricks-air`, renders jobs/train_multinode/workload.yaml (train_gpus /
+        # accelerator_type / UC location / epochs), and `air run`s it. The workload
+        # uses the named AI env `databricks_ai_v5` (ray+torch preinstalled -- no
+        # per-run install) and a shared ray_bootstrap.sh. AIR provisions train_gpus
+        # GPUs across gpu_accelerator_type nodes (16 x GPU_8xH100 = 2 nodes) and forms
+        # ONE Ray cluster; node 0 runs train_ray.py, which reads the training_set
+        # PARQUET off the Volume (no warehouse/token), fits the TorchTrainer with
+        # num_workers = total GPUs, and writes model_state.pt to the Volume.
+        # A cheap single-node run is the same task with --var train_gpus=1
+        # (GPU_1xA10) -- there is no separate @ray_launch path anymore.
+        - task_key: train_multinode
+          depends_on:
+            - task_key: preprocess
+          environment_key: default
+          spark_python_task:
+            python_file: ../jobs/train_multinode_launcher.py
+            # argv: catalog, schema, train_gpus, gpu_accelerator_type, epochs
+            parameters:
+              - ${var.catalog}
+              - ${resources.schemas.offer_recommender_schema.name}
+              - ${var.train_gpus}
+              - ${var.gpu_accelerator_type}
+              - ${var.train_epochs}
+
+        - task_key: publish_features
+          depends_on:
+            - task_key: preprocess
+          environment_key: default
+          spark_python_task:
+            python_file: ../jobs/publish_features.py
+            # 3rd param: FS reset flag (rebuild materializations after a feature-set
+            # change; --var fs_reset=true, default false = daily skip).
+            # 4th param: OPTIONAL Kafka bootstrap (host:port). Empty (default) =
+            # synthetic real-time stream; set to enable the login-stream SFV path.
+            parameters:
+              - ${var.catalog}
+              - ${resources.schemas.offer_recommender_schema.name}
+              - ${var.fs_reset}
+              - ${var.kafka_bootstrap}
+
+        # Registration runs on serverless Spark, NOT GPU: fe.log_model needs a
+        # SparkSession + the FeatureEngineeringClient, absent in the GPU task. It
+        # reads the weights the training task wrote to the Volume and rebuilds the
+        # net -- unchanged whether train_multinode or the old single-node path wrote
+        # model_state.pt (identical checkpoint contract).
+        - task_key: register_model
+          depends_on:
+            - task_key: train_multinode
+            - task_key: publish_features
+          environment_key: default
+          spark_python_task:
+            python_file: ../jobs/register_model.py
+            parameters:
+              - ${var.catalog}
+              - ${resources.schemas.offer_recommender_schema.name}
+
+        - task_key: deploy_serving
+          depends_on:
+            - task_key: register_model
+            - task_key: publish_features
+          environment_key: default
+          spark_python_task:
+            python_file: ../jobs/deploy_serving.py
+            parameters:
+              - ${var.catalog}
+              - ${resources.schemas.offer_recommender_schema.name}
+
+      environments:
+        # Serverless (client 5): install the built wheel + runtime deps.
+        # databricks-air is declared here (not pip-installed at runtime by the
+        # launcher) so the serverless env resolver fetches it at env-build time.
+        - environment_key: default
+          spec:
+            client: "5"
+            dependencies:
+              - ../dist/*.whl
+              - databricks-feature-engineering==0.16.1
+              - torch>=2.2
+              - mlflow>=3.0
+              - scikit-learn>=1.3
+              - databricks-air
+        # Standard serverless-GPU env for the Ray Train task. torch/ray are NOT
+        # preinstalled here and are pip-installed in the notebook; the wheel gives
+        # the notebook the offer_recommender package.
+        - environment_key: gpu_env
+          spec:
+            environment_version: "5"
+            dependencies:
+              - ../dist/*.whl
+      queue:
+        enabled: true
+
+    # ISOLATED multi-node training job: the SAME launcher + task as the pipeline's
+    # train_multinode step, runnable on its own (needs preprocess to have written
+    # training_set + transform_params.json to the Volume). Handy for green-testing
+    # the multi-node path without re-running generate/preprocess -- lower epochs via
+    # --var train_epochs=3. The pipeline's train_multinode task is the production use.
+    offer_recommender_multinode_train:
+      name: "[${bundle.target}] offer-recommender multi-node train (air)"
+      tasks:
+        - task_key: launch_air_multinode
+          environment_key: default
+          spark_python_task:
+            python_file: ../jobs/train_multinode_launcher.py
+            # argv: catalog, schema, train_gpus, gpu_accelerator_type, epochs
+            parameters:
+              - ${var.catalog}
+              - ${resources.schemas.offer_recommender_schema.name}
+              - ${var.train_gpus}
+              - ${var.gpu_accelerator_type}
+              - ${var.train_epochs}
+      environments:
+        - environment_key: default
+          spec:
+            client: "5"
+            dependencies:
+              - ../dist/*.whl
+              - databricks-air
+      queue:
+        enabled: true
+
+    # Ray Tune HPO SHOWCASE (manual-run, NOT in the daily pipeline): an ASHA sweep
+    # over lr/embedding_dim, 1 GPU per trial, 4 concurrent trials on GPU_1xA10, via
+    # the same air CLI + ray_bootstrap.sh pattern. Reads the training_set parquet off
+    # the Volume; logs the best config to MLflow. Demonstrates Ray Tune on the AI
+    # Runtime -- the ranker itself does not need HPO.
+    offer_recommender_tune:
+      name: "[${bundle.target}] offer-recommender Ray Tune HPO (air)"
+      tasks:
+        - task_key: launch_tune
+          environment_key: default
+          spark_python_task:
+            python_file: ../jobs/tune_launcher.py
+            # argv: catalog, schema, tune_gpus, gpu_type
+            parameters:
+              - ${var.catalog}
+              - ${resources.schemas.offer_recommender_schema.name}
+              - "4"
+              - "GPU_1xA10"
+      environments:
+        - environment_key: default
+          spec:
+            client: "5"
+            dependencies:
+              - ../dist/*.whl
+              - databricks-air
+      queue:
+        enabled: true

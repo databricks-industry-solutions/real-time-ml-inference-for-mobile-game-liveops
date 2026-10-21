@@ -1,0 +1,77 @@
+[project]
+name = "offer_recommender"
+version = "0.1.80"
+description = "Harvest Haven offer recommender: SparkML preprocessing, Ray Train on the Databricks AI Runtime, live serving via a Databricks App."
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.0",
+]
+
+[project.optional-dependencies]
+# Local preprocessing dev + the Databricks preprocessing job.
+spark = ["pyspark==3.5.3"]
+# The model itself (needed anywhere the net is built, scored or tested).
+model = ["torch>=2.2"]
+# Distributed training on the AI Runtime.
+training = ["ray[data,train]>=2.55", "torch>=2.2", "mlflow>=3.0", "scikit-learn>=1.3"]
+# Feature store + serving wiring (runs on Databricks).
+databricks = [
+    "databricks-feature-engineering==0.16.1",
+    "databricks-sdk>=0.40",
+    "mlflow>=3.0",
+]
+# Everything needed to run the local test suite (parity + OOV guards) in one
+# command: `uv pip install -e '.[dev]'`.
+dev = [
+    "pyspark==3.5.3",
+    # pyspark 3.5.3's Arrow toPandas path uses pandas APIs removed in pandas 3.0
+    # (is_datetime64tz_dtype), so cap pandas here for the test toolchain. Combines
+    # with the base `pandas>=2.0` -> `>=2.0,<3`. The runtime wheel stays uncapped
+    # (Databricks provides a compatible pandas). Revisit when pyspark is bumped.
+    "pandas<3",
+    "torch>=2.2",
+    "ruff>=0.15",
+    "mypy>=1.10",
+    "pytest>=8.0",
+    "scikit-learn>=1.3",
+    # FS client: store.py's create_match_stream / feature tests import it. Same
+    # pin as the `databricks` extra + resources/jobs.yml (Public Preview 0.16.1).
+    "databricks-feature-engineering==0.16.1",
+    # Arrow: mapInPandas / toPandas in the distributed-generation parity test.
+    "pyarrow>=15",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/offer_recommender"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "SIM", "RUF"]
+ignore = ["E501", "E402"]
+
+[tool.ruff.lint.per-file-ignores]
+# Databricks notebook-source files: dbutils/spark/display are injected globals.
+"jobs/train_air.py" = ["F821"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_ignores = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `slow` marks the Spark-fixture integration tests + the large numpy data-generation
+# tests (thousands of players). The fast local gate is `pytest -m "not slow"` (seconds);
+# CI / pre-deploy runs the full suite. Registered here so `--strict-markers` never
+# errors on it and an unmarked-test typo is caught.
+markers = [
+    "slow: Spark-session or large data-generation test (excluded from the fast gate)",
+]

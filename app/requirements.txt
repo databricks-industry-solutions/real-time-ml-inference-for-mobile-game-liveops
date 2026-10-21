@@ -1,0 +1,26 @@
+# Databricks Apps builds from this file only (not pyproject.toml). Keep in sync
+# with the app's runtime imports. The app is intentionally lightweight: it calls
+# the serving endpoint and reads Lakebase, so it needs no ML/Spark deps.
+fastapi>=0.110
+uvicorn>=0.30
+databricks-sdk>=0.40
+# Native async HTTP for the scorer's high-concurrency inference path. The SDK is
+# blocking (requests-based), so scoring the login stream through it means one
+# blocked OS thread per in-flight call -- past ~80 threads that thrashes the GIL and
+# STARVES the asyncio event loop (the kafka selector logs "blocking the event loop").
+# httpx.AsyncClient issues the inference POSTs as real coroutines on the loop instead,
+# so hundreds overlap cheaply. The SDK is still used to resolve the route-optimized
+# data-plane URL + mint the endpoint-scoped OAuth token (cached); httpx does the POST.
+httpx[http2]>=0.27
+# uvloop: a Cython/libuv event-loop drop-in that's ~2-4x faster than vanilla asyncio.
+# The scorer is single-event-loop-bound (one Python thread schedules all in-flight
+# httpx calls; throughput plateaued ~450/sec with rising latency as workers grew),
+# so a faster loop directly lifts that ceiling. uvicorn auto-selects it with
+# `--loop uvloop` (set in app.yaml). Linux-only wheel (fine -- the app runs on Linux).
+uvloop>=0.19
+sqlalchemy>=2.0
+psycopg2-binary>=2.9
+# Only used when the Kafka login path is enabled (RECO_KAFKA_BOOTSTRAP set); the
+# app consumes the `logins` topic over mTLS to drive the live board. Harmless when
+# the Kafka path is off (import is lazy inside login_consumer).
+kafka-python>=2.0

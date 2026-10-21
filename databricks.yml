@@ -1,94 +1,70 @@
 bundle:
-  name: demo_workflow
+  name: offer-recommender
 
+# Build the offer_recommender package as a wheel so job tasks can import it. The Spark /
+# feature-store / serving tasks install this wheel; the app builds separately
+# from app/requirements.txt.
+artifacts:
+  offer_recommender_wheel:
+    type: whl
+    build: uv build --wheel
+    path: .
+
+# Every deployment-specific value is a bundle variable. Set them in `.env` (copied
+# from `env.example`) as BUNDLE_VAR_<name>=...; the Databricks CLI reads those
+# natively, so nothing workspace-specific ever lives in this file.
 variables:
-  # Project name - replace with your solution accelerator name
-  project_name:
-    description: "Name of your solution accelerator"
-    default: "my-solution-accelerator"
-    
-  # The "warehouse_id" variable is used to reference the warehouse used by the dashboard.
-  warehouse_id:
-    lookup:
-      # Replace this with the name of your SQL warehouse.
-      warehouse: "Shared Unity Catalog Serverless"
-      
-  # Environment variable used for deployment paths
-  environment:
-    description: "Deployment environment (dev, staging, prod)"
-    default: "dev"
+  catalog:
+    description: "REQUIRED. Existing Unity Catalog catalog that will hold the project schema."
+  schema:
+    description: "Dedicated UC schema for this project's tables, volume, features and model."
+    default: "offer_recommender"
+  prefix:
+    description: "Unique prefix for the app name (hyphen-safe)."
+    default: "offer-reco"
+  train_gpus:
+    description: "Total GPUs for the AI Runtime training workload. AIR provisions num_accelerators / GPUs-per-node nodes (16 x GPU_8xH100 = 2 nodes)."
+    default: "1"
+  gpu_accelerator_type:
+    description: "AI Runtime accelerator: GPU_1xA10, GPU_1xH100 or GPU_8xH100. Multi-node exists only for GPU_8xH100."
+    default: "GPU_1xA10"
+  train_epochs:
+    description: "Training epochs. Lower it (e.g. 3) for a fast smoke run."
+    default: "40"
+  fs_reset:
+    description: "Force feature-store re-materialization after a feature-set change. Resolved at `bundle deploy`, not `bundle run`."
+    default: "false"
+  kafka_bootstrap:
+    description: "OPTIONAL Kafka bootstrap (host:port), e.g. `<namespace>.servicebus.windows.net:9093` for Azure Event Hubs. EMPTY (default) = synthetic in-workspace stream, no external broker needed."
+    default: ""
+  kafka_uc_connection:
+    description: "OPTIONAL UC Kafka connection (SASL/PLAIN) the managed Streaming Feature View authenticates with. Created out-of-band by provisioning/provision_databricks.sh."
+    default: ""
+  session_end_ts:
+    description: "Pinned session-window end (unix seconds). generate_data and setup_stream both use it so label and backfill windows match. Set once per install."
+    default: "1785369600"
+  login_rate:
+    description: "Synthetic logins/sec the producer emits. Keep it under ~200 unless the ranking endpoint is route-optimized (the standard serving path caps around 200 QPS)."
+    default: "150"
+  # Event Hubs auth is NOT a bundle variable: the SAS connection string lives in the
+  # `offer-reco-kafka` secret scope (see resources/secrets.yml), put there by
+  # provisioning/provision_databricks.sh.
 
+include:
+  - resources/*.yml
+  # Optional, git-ignored extra targets for your own deployments (see env.example).
+  - "*.local.yml"
+
+# No workspace host here on purpose: it comes from DATABRICKS_CONFIG_PROFILE /
+# DATABRICKS_HOST (set in .env) or `-p <profile>`.
 targets:
+  # Both targets use mode: production (no dev_<user>_ object-name prefixing) so the UC
+  # schema stays the literal `offer_recommender`: the streaming feature
+  # materialization's Lakebase sink quotes a prefixed schema name and its own
+  # validator rejects quoted identifiers, so streaming features never reach the
+  # online store under development mode.
   dev:
     default: true
-    mode: development
-
-# Customize the resources below based on your solution accelerator needs
-resources:
-  # Uncomment and customize if you have Databricks Apps
-  # apps:
-  #   your_app:
-  #     name: "your-app-name"
-  #     description: "Your app description"
-  #     source_code_path: "/Users/${workspace.current_user.userName}/${var.project_name}-${var.environment}/files/apps/your_app"
-
-  # Uncomment and customize if you have dashboards
-  # dashboards:
-  #   your_dashboard:
-  #     display_name: "Your Dashboard"
-  #     file_path: "./dashboards/your_dashboard.lvdash.json"
-  #     warehouse_id: "${var.warehouse_id}"
-
-  # Example job workflow - customize based on your notebooks
-  jobs:
-    example_workflow:
-      name: "${var.project_name} - Example Workflow"
-      tasks:
-        - task_key: example_notebook
-          notebook_task:
-            notebook_path: "./notebooks/example_notebook.ipynb"
-        - task_key: example_databricks_notebook
-          depends_on:
-            - task_key: example_notebook
-          notebook_task:
-            notebook_path: "./notebooks/example_databricks_notebook.py"
-
-# Example resources you can uncomment and customize:
-# resources:
-#   apps:
-#     your_app:
-#       name: "your-app-name"
-#       description: "Your app description"
-#       source_code_path: "./apps/your_app"
-#
-#   jobs:
-#     your_workflow:
-#       name: "Your Workflow Name"
-#       tasks:
-#         - task_key: first_task
-#           notebook_task:
-#             notebook_path: "./notebooks/your_first_notebook.ipynb"
-#         - task_key: second_task
-#           depends_on:
-#             - task_key: first_task
-#           notebook_task:
-#             notebook_path: "./notebooks/your_second_notebook.ipynb"
-#
-#   pipelines:
-#     your_pipeline:
-#       name: "Your Pipeline"
-#       storage: "/Shared/your-pipeline"
-#       configuration:
-#         your_config: "value"
-#
-#   models:
-#     your_model:
-#       name: "Your Model"
-#       model_path: "models/your_model"
-#
-#   dashboards:
-#     your_dashboard:
-#       display_name: "Your Dashboard"
-#       file_path: "./dashboards/your_dashboard.lvdash.json"
-
-# For more options and schema, see: https://docs.databricks.com/aws/en/dev-tools/bundles/settings
+    mode: production
+  prod:
+    mode: production

@@ -1,0 +1,16 @@
+# Dedicated Unity Catalog schema + volume for all project securables.
+# Everything (tables, functions, the registered model, checkpoints) lives here,
+# so the project is self-contained and easy to tear down.
+resources:
+  schemas:
+    offer_recommender_schema:
+      catalog_name: ${var.catalog}
+      name: ${var.schema}
+      comment: "Offer recommender demo (managed by DAB)."
+
+  volumes:
+    offer_recommender_artifacts:
+      catalog_name: ${var.catalog}
+      schema_name: ${resources.schemas.offer_recommender_schema.name}
+      name: artifacts
+      comment: "Fitted transform params, Ray checkpoints, streaming checkpoints."

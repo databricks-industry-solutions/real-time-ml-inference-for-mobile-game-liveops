@@ -1,0 +1,34 @@
+# The live-inference console (Databricks App). It queries two serving endpoints:
+# offer-ranker-rt (rank offers) and offer-features-fs (online feature values for the
+# drill-down). NO direct Lakebase Postgres binding: the app never queries Postgres
+# itself -- the online feature store's Lakebase backing is reached ONLY through the
+# offer-features-fs Feature Serving endpoint, not a direct DB connection. (The former
+# postgres_project + binding existed for an offer-cooldown store that was removed.)
+resources:
+  apps:
+    offer_recommender_console:
+      name: "${var.prefix}-offers-${bundle.target}"
+      description: "Live gem-offer recommendation console for Harvest Haven."
+      source_code_path: ../app
+      # LARGE (4 vCPU / 12 GB) not MEDIUM (2 vCPU / 6 GB): the global scorer loop
+      # (app.py, _SCORER_WORKERS persistent workers) drives many concurrent blocking
+      # serving calls + JSON on this single instance, and on MEDIUM the 2 vCPUs
+      # saturated at ~280 inferences/sec (app-side CPU/GIL queueing, NOT the endpoint
+      # -- offer-ranker-rt itself is route-optimized at ~16ms p50). LARGE doubles the
+      # vCPU so the board scoring keeps up with the higher login-stream rate. NOTE:
+      # the board holds a single in-process global aggregate, so it must stay ONE
+      # instance -- do NOT set compute min/max instances > 1 (horizontal autoscaling)
+      # without first moving the aggregate to shared storage, or each replica would
+      # accumulate its own divergent board window.
+      compute_size: LARGE
+      resources:
+        - name: offer-ranker-endpoint
+          description: "Real-time offer-ranking serving endpoint."
+          serving_endpoint:
+            name: "offer-ranker-rt"
+            permission: "CAN_QUERY"
+        - name: offer-features-endpoint
+          description: "Feature Serving endpoint: online feature values by player_id."
+          serving_endpoint:
+            name: "offer-features-fs"
+            permission: "CAN_QUERY"

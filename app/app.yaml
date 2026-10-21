@@ -1,0 +1,41 @@
+command:
+  - "python"
+  - "-m"
+  - "uvicorn"
+  - "app:app"
+  - "--host"
+  - "0.0.0.0"
+  - "--port"
+  - "8000"
+  # uvloop: ~2-4x faster event loop than vanilla asyncio. The scorer is
+  # single-event-loop-bound (throughput plateaued ~450/sec with rising latency as
+  # scorer coroutines grew), so a faster loop lifts that ceiling. Requires the uvloop
+  # package (requirements.txt).
+  - "--loop"
+  - "uvloop"
+  # Disable uvicorn's per-request access log. Browsers poll /api/board + /api/metrics
+  # ~1/sec each, so on a CPU-bound app instance the access-log line per request is
+  # pure overhead (stdout I/O in the request path). App-level logging (startup,
+  # errors, the consumer heartbeat) still goes through the offer_recommender logger.
+  - "--no-access-log"
+
+# The app queries two serving endpoints (below); it holds no direct Lakebase/DB
+# binding (the online feature store is reached only via offer-features-fs).
+env:
+  # The real-time serving endpoint the app queries for offer ranking.
+  - name: SERVING_ENDPOINT_NAME
+    value: "offer-ranker-rt"
+  # The Feature Serving endpoint the drill-down reads online feature values from.
+  - name: FEATURE_ENDPOINT_NAME
+    value: "offer-features-fs"
+  # OPTIONAL Kafka login path (empty bootstrap by default -> board idle, no broker
+  # needed). The mTLS certs are NOT passed here: multi-KB base64 gets mangled
+  # through app.yaml var interpolation, so login_consumer reads them from the
+  # `offer-reco-kafka` secret scope at startup (the app SP has READ). Only the
+  # short, interpolation-safe values live here.
+  - name: RECO_KAFKA_BOOTSTRAP
+    value: "${var.kafka_bootstrap}"
+  - name: RECO_KAFKA_TOPIC
+    value: "logins"
+  - name: RECO_KAFKA_SECRET_SCOPE
+    value: "offer-reco-kafka"

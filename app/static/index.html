@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nordfall Offer Recommender</title>
+  <!-- Inline aurora-dot favicon (data URI) so the browser's auto /favicon.ico
+       request doesn't 404; on-brand with the accent green. -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='11' fill='%2346e3a0'/%3E%3C/svg%3E">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <!-- CDN deps pinned. @babel/standalone MUST stay 7.x: Babel 8's preset-react
+       defaults to the automatic JSX runtime and injects an import into compiled
+       output, which the in-browser transformer cannot run as a classic script. -->
+  <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"></script>
+  <style>
+    :root {
+      /* Nordic dusk palette: deep indigo canvas, aurora green accent, amber for revenue. */
+      --bg: #0b0e14;
+      --surface: #141926;
+      --surface-2: #1c2333;
+      --border: #29324a;
+      --text: #e6ebf5;
+      --muted: #8592ad;
+      --accent: #46e3a0;      /* aurora green: chosen offer / positive */
+      --accent-dim: #1f7a58;
+      --amber: #f4b740;       /* revenue */
+      --realtime: #5cc8ff;    /* real-time feature highlight */
+      --offline: #b28dff;     /* offline feature highlight */
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, sans-serif; font-size: 14px; }
+    .container { max-width: 1500px; margin: 0 auto; padding: 0 32px; }
+
+    .header { display: flex; align-items: center; justify-content: space-between; padding: 22px 0 18px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+    .header .brand { display: flex; align-items: baseline; gap: 12px; }
+    .header h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: -0.02em; }
+    .header .sub { font-size: 0.78rem; color: var(--muted); }
+    .run-panel { display: flex; gap: 20px; font-size: 0.75rem; color: var(--muted); }
+    .run-panel b { color: var(--text); font-weight: 600; }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+    .dot.up { background: var(--accent); } .dot.down { background: #e05c6e; }
+
+    .layout { display: grid; grid-template-columns: 1.35fr 1fr; gap: 20px; align-items: start; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; }
+    .card h2 { font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 14px; font-weight: 600; }
+
+    .feed { display: flex; flex-direction: column; gap: 10px; max-height: 74vh; overflow-y: auto; }
+    .feed-row { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; cursor: pointer; transition: border-color 0.12s; }
+    .feed-row:hover { border-color: var(--accent-dim); }
+    .feed-row .top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .pid { font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; color: var(--text); }
+    .seg { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 8px; border-radius: 20px; background: var(--border); color: var(--muted); }
+    .chosen { display: flex; align-items: center; gap: 10px; }
+    .chosen .oid { font-family: 'JetBrains Mono', monospace; color: var(--accent); font-weight: 600; }
+    .rev { color: var(--amber); font-weight: 600; font-variant-numeric: tabular-nums; }
+    .lat { font-size: 0.7rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+    .detail .empty { color: var(--muted); font-size: 0.85rem; padding: 24px 0; text-align: center; }
+    .feat-group { margin-bottom: 16px; }
+    .feat-group .label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+    .feat-group.offline .label { color: var(--offline); }
+    .feat-group.realtime .label { color: var(--realtime); }
+    .feat-group.streaming .label { color: var(--amber); }
+    .feat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; }
+    .feat { display: flex; justify-content: space-between; font-size: 0.8rem; padding: 4px 0; border-bottom: 1px solid var(--surface-2); }
+    .feat .k { color: var(--muted); } .feat .v { font-variant-numeric: tabular-nums; font-family: 'JetBrains Mono', monospace; border-radius: 4px; padding: 0 3px; }
+    /* Freshness cue: a changed streaming value briefly highlights so the viewer sees
+       the 0.5s refresh is live even though per-player 15-min windows only step
+       occasionally (between that player's own logins). */
+    .feat .v.changed { animation: feat-flash 900ms ease-out; }
+    @keyframes feat-flash {
+      0% { background: rgba(240,180,60,0.55); color: var(--text); }
+      100% { background: rgba(240,180,60,0); }
+    }
+    .feat-fresh { margin-left: auto; font-size: 0.6rem; letter-spacing: 0.04em; text-transform: none;
+      color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+    @media (prefers-reduced-motion: reduce) { .feat .v.changed { animation: none; } }
+
+    .offer-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+    .offer { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-radius: 6px; background: var(--surface-2); font-size: 0.8rem; }
+    .offer.top { background: rgba(70,227,160,0.10); border: 1px solid var(--accent-dim); }
+    .offer .oid { font-family: 'JetBrains Mono', monospace; }
+    .offer .cd { font-size: 0.66rem; color: #e05c6e; text-transform: uppercase; letter-spacing: 0.04em; }
+    .legend { font-size: 0.72rem; color: var(--muted); margin-top: 12px; line-height: 1.5; }
+
+    .big-num { font-variant-numeric: tabular-nums; }
+
+    /* Purchase-probability panel in the drill-down (above Ranked offers) */
+    .buy-prob { display: flex; align-items: center; justify-content: space-between;
+      background: linear-gradient(135deg, var(--surface-2), rgba(92,200,255,0.06));
+      border: 1px solid var(--realtime); border-radius: 10px; padding: 12px 16px; margin: 8px 0 4px; }
+    .buy-prob-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); display: flex; flex-direction: column; gap: 3px; }
+    .buy-prob-sub { font-size: 0.66rem; text-transform: none; letter-spacing: 0; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+    .buy-prob-val { font-size: 1.9rem; font-weight: 700; color: var(--realtime); font-variant-numeric: tabular-nums; font-family: 'JetBrains Mono', monospace; }
+    .buy-pct { font-size: 0.7rem; color: var(--realtime); font-variant-numeric: tabular-nums; margin-right: 10px; }
+
+    /* --- Live ranking board (hero): spotlight + animated bars over an aurora --- */
+    .live-board { margin-bottom: 20px; position: relative; overflow: hidden; }
+    .aurora { position: absolute; inset: 0; pointer-events: none; z-index: 0;
+      background: radial-gradient(50% 80% at 20% 0%, rgba(70,227,160,0.14), transparent 60%),
+                  radial-gradient(45% 80% at 85% 0%, rgba(92,200,255,0.10), transparent 60%);
+      animation: aurora-drift 14s ease-in-out infinite alternate; }
+    @keyframes aurora-drift { from { transform: translateX(-4%) translateY(-2%); } to { transform: translateX(6%) translateY(3%); } }
+    .live-board > * { position: relative; z-index: 1; }
+
+    /* --- Live line charts (purchase probability + offer mix), side by side --- */
+    .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+    @media (max-width: 900px) { .chart-row { grid-template-columns: 1fr; } }
+    .prob-board { position: relative; overflow: hidden; }
+    .prob-board > * { position: relative; z-index: 1; }
+    .pb-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 8px; gap: 12px; }
+    .pb-sub { font-size: 0.76rem; color: var(--muted); margin-top: 3px; }
+    .pb-now { text-align: right; display: flex; flex-direction: column; flex-shrink: 0; }
+    .pb-now-val { font-size: 2.2rem; font-weight: 700; color: var(--accent); line-height: 1;
+      font-variant-numeric: tabular-nums; font-family: 'JetBrains Mono', monospace; text-shadow: 0 0 22px rgba(70,227,160,0.30); }
+    .pb-now-lbl { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-top: 4px; }
+    /* rotated y-axis title as an HTML element (NOT inside the non-uniformly scaled
+       SVG, which distorted + overlapped the % ticks). Sits in the left gutter. */
+    .prob-board { padding-left: 34px; }
+    .pb-ylabel { position: absolute; left: 2px; top: 50%; transform: translateY(-50%) rotate(-180deg);
+      writing-mode: vertical-rl; font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--muted); white-space: nowrap; z-index: 2; }
+    .prob-svg { width: 100%; height: 240px; display: block; }
+    .prob-empty { height: 240px; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 0.9rem; }
+    .pb-axis-label { font-size: 0.66rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); text-align: center; margin-top: 2px; }
+    .pb-oid { font-family: 'JetBrains Mono', monospace; color: var(--accent); }
+    /* Offer-share chart legend: colored swatch + offer_id per line */
+    .share-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 8px 0 2px; }
+    .share-leg { display: inline-flex; align-items: center; gap: 6px; font-size: 0.74rem;
+      color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+    .share-swatch { width: 12px; height: 3px; border-radius: 2px; display: inline-block; }
+    @media (prefers-reduced-motion: reduce) { .prob-board .aurora { animation: none; } }
+    .lb-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; }
+    .lb-head h2 { margin-bottom: 0; }
+    .lb-lat { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 0.75rem; }
+    .lb-body { display: grid; grid-template-columns: 300px 1fr; gap: 24px; align-items: stretch; }
+
+    /* Winner spotlight */
+    .spotlight { background: linear-gradient(160deg, var(--surface-2), rgba(70,227,160,0.05)); border: 1px solid var(--accent-dim);
+      border-radius: 12px; padding: 20px; display: flex; flex-direction: column; justify-content: center;
+      animation: sp-flash 620ms cubic-bezier(.22,1,.36,1); }
+    @keyframes sp-flash {
+      0% { box-shadow: 0 0 0 rgba(70,227,160,0); transform: scale(0.985); }
+      35% { box-shadow: 0 0 34px rgba(70,227,160,0.45); }
+      100% { box-shadow: 0 0 16px rgba(70,227,160,0.12); transform: scale(1); }
+    }
+    .sp-eyebrow { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--accent); margin-bottom: 10px; }
+    .sp-offer { font-family: 'JetBrains Mono', monospace; font-size: 1.5rem; font-weight: 600; color: var(--text); }
+    .sp-type { font-size: 0.8rem; color: var(--muted); margin-top: 2px; text-transform: capitalize; }
+    .sp-rev { font-size: 3rem; font-weight: 700; color: var(--amber); font-variant-numeric: tabular-nums; letter-spacing: -0.03em;
+      font-family: 'JetBrains Mono', monospace; margin: 14px 0 12px; text-shadow: 0 0 26px rgba(244,183,64,0.4); }
+    .sp-meta { display: flex; align-items: center; gap: 10px; }
+    .sp-pid { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--muted); }
+    .lb-board-col { display: flex; flex-direction: column; justify-content: center; }
+
+    .lb-rows { display: flex; flex-direction: column; gap: 8px; }
+    .lb-row { display: grid; grid-template-columns: 92px 1fr 84px; align-items: center; gap: 14px; will-change: transform; }
+    .lb-oid { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--muted); }
+    .lb-track { height: 24px; background: var(--surface-2); border-radius: 6px; overflow: hidden; }
+    .lb-fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, var(--accent-dim), var(--amber));
+               transition: width 520ms cubic-bezier(.22,1,.36,1); position: relative; }
+    .lb-fill::after { content: ""; position: absolute; inset: 0; border-radius: 6px;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.18), transparent);
+      transform: translateX(-100%); animation: shimmer 2.6s ease-in-out infinite; }
+    @keyframes shimmer { 0% { transform: translateX(-100%); } 60%,100% { transform: translateX(100%); } }
+    .lb-rev { text-align: right; color: var(--amber); font-weight: 600; font-size: 0.95rem;
+              font-variant-numeric: tabular-nums; font-family: 'JetBrains Mono', monospace; }
+    .lb-row.chosen .lb-oid { color: var(--accent); font-weight: 600; }
+    .lb-row.chosen .lb-fill { background: linear-gradient(90deg, var(--accent-dim), var(--accent)); box-shadow: 0 0 14px rgba(70,227,160,0.45); }
+    @media (prefers-reduced-motion: reduce) {
+      .lb-fill, .lb-fill::after, .aurora, .spotlight, .agg-fill { animation: none; transition: none; }
+    }
+    /* Keyboard focus ring for the div/bar controls (Feed rows, leaderboard bars, tabs). */
+    .feed-row:focus-visible, .agg-bar:focus-visible, .tab:focus-visible {
+      outline: 2px solid var(--accent); outline-offset: 2px; }
+    /* Stream-idle badge: shown when no live events arrive so stale != live. */
+    .conn-down { font-size: 0.62rem; letter-spacing: 0.04em; text-transform: uppercase;
+      color: #f4b740; border: 1px solid #f4b740; border-radius: 4px; padding: 1px 7px;
+      font-weight: 600; align-self: center; }
+    @media (max-width: 900px) {
+      .layout, .lb-body { grid-template-columns: 1fr; }
+    }
+
+    /* Provenance strip: the AIR+Ray training headline */
+    .provenance { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+      background: linear-gradient(90deg, rgba(92,200,255,0.08), transparent);
+      border: 1px solid var(--border); border-left: 3px solid var(--realtime);
+      border-radius: 8px; padding: 10px 16px; margin-bottom: 20px; font-size: 0.8rem; }
+    .pv-badge { font-size: 0.62rem; letter-spacing: 0.12em; color: var(--realtime);
+      border: 1px solid var(--realtime); border-radius: 4px; padding: 2px 7px; font-weight: 600; }
+    .pv-main { color: var(--text); font-weight: 500; }
+    .pv-model { color: var(--muted); } .pv-model b { color: var(--text); font-weight: 600; }
+    .pv-metrics { color: var(--muted); font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; margin-left: auto; }
+
+    /* Feature-group source badge in the drill-down */
+    .feat-src { margin-left: 8px; font-size: 0.62rem; letter-spacing: 0.04em; text-transform: none;
+      color: var(--muted); background: var(--surface-2); border-radius: 4px; padding: 1px 7px; }
+
+    /* Aggregates row: offer leaderboard + segment mix, side by side */
+    .agg-row { display: grid; grid-template-columns: 1.6fr 1fr; gap: 20px; margin-bottom: 20px; }
+    @media (max-width: 900px) { .agg-row { grid-template-columns: 1fr; } }
+    .agg-hint { font-size: 0.6rem; letter-spacing: 0.04em; text-transform: none; color: var(--muted);
+      font-weight: 400; margin-left: 8px; }
+    /* Offer leaderboard bars: aggregated served-count + revenue, click to filter */
+    .agg-bar { position: relative; display: flex; align-items: center; gap: 10px; overflow: hidden;
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+      padding: 9px 13px; cursor: pointer; transition: border-color 0.12s; }
+    .agg-bar:hover { border-color: var(--accent-dim); }
+    .agg-bar.sel { border-color: var(--accent); }
+    .agg-fill { position: absolute; left: 0; top: 0; bottom: 0; z-index: 0;
+      background: linear-gradient(90deg, rgba(70,227,160,0.20), rgba(70,227,160,0.05));
+      transition: width 0.6s ease-out; }
+    .agg-bar > * { position: relative; z-index: 1; }
+    .agg-oid { font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; color: var(--text); }
+    .agg-n { font-size: 0.72rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .agg-rev { margin-left: auto; color: var(--amber); font-family: 'JetBrains Mono', monospace;
+      font-weight: 600; font-variant-numeric: tabular-nums; }
+    /* Segment mix chips */
+    .seg-mix { display: flex; flex-direction: column; gap: 8px; }
+    .seg-chip { display: flex; align-items: center; gap: 10px; background: var(--surface-2);
+      border: 1px solid var(--border); border-radius: 8px; padding: 9px 13px; }
+    .seg-pct { margin-left: auto; color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+    .seg-n { font-size: 0.72rem; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 48px; text-align: right; }
+    /* Feed filter pill */
+    .feed-filter { margin-left: 8px; font-size: 0.62rem; text-transform: none; letter-spacing: 0;
+      color: var(--accent); border: 1px solid var(--accent-dim); border-radius: 4px; padding: 1px 7px; font-weight: 500; }
+    .feed-row.sel { border-color: var(--accent); }
+
+    /* Tab switch: Live board vs Serving Ops */
+    .tabs { display: flex; gap: 6px; margin-bottom: 18px; }
+    .tab { background: var(--surface-2); color: var(--muted); border: 1px solid var(--border);
+      border-radius: 8px; padding: 8px 18px; font-size: 0.8rem; font-weight: 600; cursor: pointer;
+      font-family: inherit; letter-spacing: 0.02em; transition: color 0.12s, border-color 0.12s; }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--accent); border-color: var(--accent-dim); background: rgba(70,227,160,0.08); }
+
+    /* Serving Ops dashboard */
+    .ops-row { display: grid; grid-template-columns: 1fr 1.3fr 1.3fr; gap: 20px; margin-bottom: 20px; }
+    /* Ingestion (narrow) + Model inference chart (wide). */
+    .ops-row.two { grid-template-columns: 1fr 2.4fr; }
+    @media (max-width: 900px) { .ops-row, .ops-row.two { grid-template-columns: 1fr; } }
+    /* Model-inference latency chart: p50/p95/p99 on a shared ms y-scale. */
+    .lat-chart-wrap { position: relative; margin: 6px 0 12px; }
+    .lat-chart { width: 100%; height: 200px; display: block; }
+    .lat-chart-empty { display: flex; align-items: center; justify-content: center;
+      color: var(--muted); font-size: 0.8rem; border: 1px dashed var(--border); border-radius: 8px; }
+    .lat-yaxis-label { position: absolute; top: 50%; left: -6px; transform: rotate(-90deg) translateX(50%);
+      transform-origin: left center; font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--muted); white-space: nowrap; }
+    .lat-legend { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 10px; font-size: 0.78rem; color: var(--muted); }
+    .lat-leg { display: inline-flex; align-items: center; gap: 6px; }
+    .lat-leg b { color: var(--text); font-variant-numeric: tabular-nums; font-family: 'JetBrains Mono', monospace; }
+    .lat-swatch { width: 11px; height: 3px; border-radius: 2px; display: inline-block; }
+    .lat-legend-server { margin-top: -4px; margin-bottom: 6px; align-items: baseline; }
+    .lat-leg-label { color: var(--realtime); font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; font-size: 0.68rem; }
+    @media (prefers-reduced-motion: reduce) { .lat-chart polyline { transition: none; } }
+    .ops-panel .ops-endpoint { font-family: 'JetBrains Mono', monospace; font-size: 0.72rem;
+      color: var(--realtime); margin-bottom: 14px; }
+    .ops-big { display: flex; align-items: baseline; gap: 8px; }
+    .ops-big .big-num { font-size: 2.6rem; font-weight: 700; color: var(--accent);
+      font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+    .ops-big-unit { font-size: 0.8rem; color: var(--muted); }
+    .ops-stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+    .ops-stat-row.three { grid-template-columns: repeat(3, 1fr); }
+    .spark { width: 100%; display: block; margin: 4px 0 14px; }
+    .spark-empty { display: flex; align-items: center; justify-content: center; height: 100%;
+      font-size: 0.7rem; color: var(--muted); }
+    .ops-stat { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px 12px; text-align: center; }
+    .ops-stat-label { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+    .ops-stat-value { font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 4px; }
+    .ops-stat-value.accent { color: var(--accent); } .ops-stat-value.amber { color: var(--amber); }
+    .ops-stat-unit { font-size: 0.7rem; color: var(--muted); font-weight: 400; margin-left: 2px; }
+    .ops-sub { font-size: 0.72rem; color: var(--muted); margin-top: 12px; font-variant-numeric: tabular-nums; }
+    .ops-note { background: linear-gradient(90deg, rgba(92,200,255,0.06), transparent); }
+    .ops-cap { font-size: 0.85rem; color: var(--text); line-height: 1.55; }
+    .ops-cap b { color: var(--accent); }
+    .ops-hint-line { font-size: 0.74rem; color: var(--muted); line-height: 1.5; margin-bottom: 20px; padding: 0 2px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <!-- Plain script (runs before the babel transform of app.jsx) exposing
+       window.Pure -- the unit-tested pure helpers app.jsx destructures. -->
+  <script src="pure.js"></script>
+  <script type="text/babel" src="app.jsx"></script>
+</body>
+</html>

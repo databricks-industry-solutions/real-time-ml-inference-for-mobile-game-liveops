@@ -1,27 +1,44 @@
-# Databricks Asset Bundle files
-.databricks/
-
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS files
-.DS_Store
-Thumbs.db
-
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
+.venv/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
 *.egg-info/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+# provisioning/ writes the Event Hubs SAS connection string here -- never commit it.
+.secrets/
+**/.secrets/
+
+# Databricks
+.databricks/
+databricks.yml.bak
+# Rendered at bundle deploy by the gpu_task_config artifact
+jobs/*/hyperparameters.yaml
+
+# Test + build outputs
+test_output/
 dist/
 build/
+node_modules/
 
-# Jupyter Notebook checkpoints
+# Notebook checkpoints
 .ipynb_checkpoints/
 
-# Environment files
-.env
-.env.local 
+# OS
+.DS_Store
+
+# Editor / tool / agent scratch (not project source)
+.vscode/
+.idea/
+.serena/
+.superpowers/
+
+# Private, per-deployment config (see env.example)
+*.local.yml
+CLAUDE.local.md

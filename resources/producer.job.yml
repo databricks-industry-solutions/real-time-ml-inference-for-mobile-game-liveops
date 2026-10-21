@@ -1,0 +1,31 @@
+# Serverless synthetic event producer -> Azure Event Hubs (Kafka sink, SASL/PLAIN).
+#
+# `continuous` + PAUSED: each launch produces paced per-second batches for
+# RECO_PRODUCER_RUN_SECONDS then exits, and the continuous trigger relaunches it ->
+# a steady live stream. Left PAUSED so it costs nothing until a demo needs the live
+# feed (UNPAUSE in the Jobs UI, or set pause_status: UNPAUSED and redeploy). Only
+# meaningful when var.kafka_bootstrap points at Event Hubs and the SAS connection
+# string is in the `offer-reco-kafka` secret scope (key eventhub_connection_string).
+resources:
+  jobs:
+    offer_recommender_event_producer:
+      name: "[${bundle.target}] offer-recommender event producer (Event Hubs)"
+      continuous:
+        pause_status: PAUSED
+      tasks:
+        - task_key: produce
+          environment_key: default
+          spark_python_task:
+            python_file: ../jobs/produce_events.py
+            # argv: catalog, schema, kafka_bootstrap, login_rate.
+            parameters:
+              - ${var.catalog}
+              - ${resources.schemas.offer_recommender_schema.name}
+              - ${var.kafka_bootstrap}
+              - ${var.login_rate}
+      environments:
+        - environment_key: default
+          spec:
+            client: "5"
+            dependencies:
+              - ../dist/*.whl

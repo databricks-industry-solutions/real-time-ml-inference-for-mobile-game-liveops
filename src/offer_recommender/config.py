@@ -106,8 +106,8 @@ ONLINE_FS_ENDPOINT = "offer-features-fs"
 # no app yet). Default matches resources/app.yml `${var.prefix}-offers-${target}`.
 APP_NAME = os.environ.get("RECO_APP_NAME", "offer-reco-offers-classic")
 
-# --- Kafka streams (OPTIONAL, config-gated) ----------------------------------
-# TWO decoupled topics when RECO_KAFKA_BOOTSTRAP is set:
+# --- Kafka streams (required) ------------------------------------------------
+# TWO decoupled topics on the broker at RECO_KAFKA_BOOTSTRAP:
 #   - `logins` (LOGIN_TOPIC): inference-trigger events, consumed by the app to
 #     drive live scoring + the board. Carries the request-time passthrough only.
 #   - `match_events` (MATCH_TOPIC): gameplay activity, consumed by the Streaming
@@ -115,9 +115,8 @@ APP_NAME = os.environ.get("RECO_APP_NAME", "offer-reco-offers-classic")
 #     builds the rolling-window aggregates from there. Each login spawns a dense
 #     burst of ~100 match events over ~4 min, so per-player 15-min windows are
 #     dense (matching the training timeline in data.sessions).
-# When UNSET (the portable one-command default), the synthetic in-workspace
-# stream (stream_features.py) is used instead. The broker is provisioned
-# out-of-band (provisioning/provision_eventhub.sh for Azure Event Hubs).
+# setup_stream, preprocess and the producer fail fast when it is unset. The broker
+# is provisioned out-of-band (provisioning/provision_eventhub.sh for Azure Event Hubs).
 TABLE_MATCH_INGEST = "match_events"
 # Single-row metadata table written by generate_data holding the exact window
 # bounds used for the purchase labels.  setup_stream reads this instead of
@@ -188,9 +187,8 @@ def get_session_end_ts() -> pd.Timestamp:
 def get_kafka_bootstrap() -> str | None:
     """Return the Kafka bootstrap servers if the Kafka login path is enabled.
 
-    None means "not configured" -> callers fall back to the synthetic in-workspace
-    stream, so the demo installs and runs with one command and no external broker.
-    For the Event Hubs path this is `<namespace>.servicebus.windows.net:9093`.
+    None means "not configured": the pipeline jobs that need the stream raise, and
+    the app's login consumer stays idle. For Azure Event Hubs this is `<namespace>.servicebus.windows.net:9093`.
     """
     return os.environ.get("RECO_KAFKA_BOOTSTRAP") or None
 

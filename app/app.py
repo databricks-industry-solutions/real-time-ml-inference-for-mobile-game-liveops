@@ -48,8 +48,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 app = FastAPI(title="Nordfall Offer Recommender")
 
 # Start the Kafka login consumer (no-op unless RECO_KAFKA_BOOTSTRAP is set). When
-# active, the live board advances on real streamed logins; otherwise it falls back
-# to random players so the demo still runs with no external broker.
+# active, the live board advances on real streamed logins; otherwise it stays idle.
 login_consumer.start()
 
 # Default-loop executor threads. Since the async refactor almost nothing runs here:

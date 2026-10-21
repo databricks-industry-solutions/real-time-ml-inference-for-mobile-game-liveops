@@ -55,9 +55,9 @@ def main() -> None:
     spark = SparkSession.builder.getOrCreate()
     argv = sys.argv[1:]
     configure_from_argv(argv)
-    # 4th param carries the optional Kafka bootstrap (DAB var.kafka_bootstrap). Set
-    # the env var so get_kafka_bootstrap() sees it; a pre-set env still wins (local
-    # runs / overrides). Empty -> synthetic stream path.
+    # 4th param carries the Kafka bootstrap (DAB var.kafka_bootstrap). Set the env
+    # var so get_kafka_bootstrap() sees it; a pre-set env still wins (local runs /
+    # overrides).
     if len(argv) >= 4 and argv[3]:
         os.environ.setdefault("RECO_KAFKA_BOOTSTRAP", argv[3])
     uc = get_config()

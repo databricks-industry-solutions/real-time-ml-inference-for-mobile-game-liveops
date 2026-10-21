@@ -183,7 +183,7 @@ def main() -> None:
     spark = SparkSession.builder.getOrCreate()
     argv = sys.argv[1:]
     configure_from_argv(argv)  # consumes [catalog, schema]
-    # 3rd param = optional kafka bootstrap (mirrors preprocess/publish_features arg style).
+    # 3rd param = kafka bootstrap (required) (mirrors preprocess/publish_features arg style).
     if len(argv) >= 3 and argv[2]:
         os.environ.setdefault("RECO_KAFKA_BOOTSTRAP", argv[2])
     # 4th param = pinned session-window end timestamp (unix seconds).  Sets

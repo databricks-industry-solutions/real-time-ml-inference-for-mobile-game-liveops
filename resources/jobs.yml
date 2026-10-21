@@ -73,7 +73,7 @@ resources:
             # must clear the stale streaming Features that still bind the old stream
             # (else get_feature returns a dangling-full_name Feature -> _from_sdk
             # ValueError). Default false = daily re-run reuses existing Features.
-            # 4th param: OPTIONAL Kafka bootstrap (host:port). Required at runtime
+            # 4th param: Kafka bootstrap (host:port). Required at runtime
             # now that preprocess PIT-joins the streaming Feature View into the
             # training table (the 5 rolling-window features are no longer on the
             # impression log). Deploy with --var kafka_bootstrap=<broker host:port>.
@@ -117,8 +117,8 @@ resources:
             python_file: ../jobs/publish_features.py
             # 3rd param: FS reset flag (rebuild materializations after a feature-set
             # change; --var fs_reset=true, default false = daily skip).
-            # 4th param: OPTIONAL Kafka bootstrap (host:port). Empty (default) =
-            # synthetic real-time stream; set to enable the login-stream SFV path.
+            # 4th param: Kafka bootstrap (host:port). Required: the streaming feature
+            # group is a Streaming Feature View over the match stream.
             parameters:
               - ${var.catalog}
               - ${resources.schemas.offer_recommender_schema.name}

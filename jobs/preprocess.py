@@ -44,7 +44,7 @@ def main() -> None:
     argv = sys.argv[1:]
     configure_from_argv(argv)
     # Param layout mirrors publish_features EXACTLY: [catalog, schema, fs_reset,
-    # kafka_bootstrap]. 3rd param = FS reset flag; 4th = optional Kafka bootstrap
+    # kafka_bootstrap]. 3rd param = FS reset flag; 4th = Kafka bootstrap
     # (DAB var.kafka_bootstrap). Set the env var so get_kafka_bootstrap() sees it; a
     # pre-set env still wins (local runs / overrides).
     if len(argv) >= 4 and argv[3]:

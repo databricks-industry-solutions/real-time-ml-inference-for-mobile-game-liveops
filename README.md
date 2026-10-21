@@ -28,12 +28,15 @@ Preview.
    rolling-window streaming features (15 minutes) come from a managed Streaming Feature
    View over Kafka. Both sync to the Lakebase online store.
 5. **Serving:** the model is logged with its feature spec, so the `offer-ranker-rt`
-   endpoint looks up features by `player_id` and the caller sends only the key and the
-   candidate offers. A FastAPI + React app consumes the login stream and shows a live
-   board of scored decisions with a per-player feature drill-down.
+   endpoint looks up the batch and streaming features by `player_id`. The caller sends
+   the key, the login's request-time values (gem balance, minutes since last purchase,
+   match count, event time) and the candidate offers. A FastAPI + React app consumes the
+   login stream and shows a live board of scored decisions with a per-player feature
+   drill-down.
 
-Real-time events come from **Azure Event Hubs** (Kafka protocol). This path is optional:
-with no broker configured, the pipeline uses a synthetic in-workspace stream.
+Real-time events come from **Azure Event Hubs** (Kafka protocol): a serverless producer
+job writes synthetic logins and match events. The Streaming Feature View and the app
+consume them. The pipeline requires this stream; there is no broker-free mode.
 
 ## Prerequisites
 
@@ -42,7 +45,8 @@ with no broker configured, the pipeline uses a synthetic in-workspace stream.
   the required workspace preview).
 - [Databricks CLI](https://docs.databricks.com/dev-tools/cli/install.html) and
   [uv](https://docs.astral.sh/uv/).
-- Optional, for the real-time path: an Azure subscription and the Azure CLI.
+- An Azure subscription and the Azure CLI, for the Event Hubs namespace (created by
+  `provisioning/provision_eventhub.sh`).
 
 ## Configuration
 
@@ -50,31 +54,39 @@ Every deployment-specific value lives in one git-ignored `.env` file; nothing
 workspace-specific is committed. `env.example` documents every setting:
 
 ```bash
-cp env.example .env      # set DATABRICKS_CONFIG_PROFILE and BUNDLE_VAR_catalog at minimum
+cp env.example .env      # fill in the workspace, catalog and Event Hubs settings
 set -a && source .env && set +a
 ```
 
-`BUNDLE_VAR_<name>` entries set the bundle variables declared in `databricks.yml`, and
-the CLI reads them natively. `EH_*` entries drive the Event Hubs provisioning script. To
+`BUNDLE_VAR_<name>` entries set the bundle variables declared in `databricks.yml`; the
+CLI reads them natively. `EH_*` entries drive the Event Hubs provisioning script. To
 keep several deployments side by side, add your own targets to a git-ignored
 `*.local.yml` file, which `databricks.yml` includes automatically.
 
 ## Deploy
 
-Quick start with the synthetic stream (no external broker):
+A first deploy has a required order. Event Hubs and the UC connection come first, the
+producer must be running before stream setup and the app can only deploy after the
+pipeline has created its serving endpoints. Follow
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). In short:
 
 ```bash
 set -a && source .env && set +a
-databricks bundle deploy
+provisioning/provision_eventhub.sh                       # Event Hubs namespace + topics
+databricks bundle deploy                                 # with resources/app.yml disabled
+provisioning/provision_databricks.sh                     # secrets + UC Kafka connection
+databricks bundle run offer_recommender_event_producer --no-wait
 databricks bundle run offer_recommender_pipeline
 ```
 
-The pipeline generates data, preprocesses, trains on serverless GPU, publishes features,
-registers the model and deploys the serving endpoints. The real-time path (Event Hubs,
-producer job, live app) has a required deploy order and a few post-deploy steps; follow
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+The pipeline generates data, sets up the stream, preprocesses, trains on serverless GPU,
+publishes features, registers the model and deploys the serving endpoints.
 
-To remove everything: `databricks bundle destroy` (or `scripts/cleanup.sh`).
+`databricks bundle destroy` (or `scripts/cleanup.sh`) removes the bundle-managed
+resources: jobs, app, schema, volume and secret scope. The serving endpoints, the
+online store, the feature materializations, the UC connection and the Event Hubs
+namespace are created by the pipeline or the provisioning scripts and must be deleted
+separately.
 
 ## Layout
 
@@ -112,26 +124,26 @@ below.
 | Package | License | Copyright |
 |---------|---------|-----------|
 | numpy | BSD-3-Clause | NumPy Developers |
-| pandas | BSD-3-Clause | pandas Development Team |
+| pandas | BSD-3-Clause | AQR Capital Management, Lambda Foundry and the PyData Development Team |
 | pyspark | Apache-2.0 | The Apache Software Foundation |
 | pyarrow | Apache-2.0 | The Apache Software Foundation |
-| torch | BSD-3-Clause | PyTorch Contributors |
-| ray | Apache-2.0 | The Ray Team |
+| torch | BSD-3-Clause | Facebook, Inc. and PyTorch contributors |
+| ray | Apache-2.0 | Ray Team |
 | scikit-learn | BSD-3-Clause | scikit-learn Developers |
 | mlflow | Apache-2.0 | Databricks, Inc. |
-| fsspec | BSD-3-Clause | fsspec Developers |
+| fsspec | BSD-3-Clause | Martin Durant |
 | databricks-sdk | Apache-2.0 | Databricks, Inc. |
-| databricks-feature-engineering | Databricks License | Databricks, Inc. |
-| databricks-feature-lookup | Databricks License | Databricks, Inc. |
-| databricks-air | Databricks License | Databricks, Inc. |
+| databricks-feature-engineering | Databricks Proprietary License | Databricks, Inc. |
+| databricks-feature-lookup | Databricks Proprietary License | Databricks, Inc. |
+| databricks-air | Not declared in package metadata | Databricks, Inc. |
 | fastapi | MIT | Sebastián Ramírez |
 | uvicorn | BSD-3-Clause | Encode OSS Ltd. |
-| uvloop | MIT / Apache-2.0 | MagicStack Inc. |
+| uvloop | MIT / Apache-2.0 | The uvloop authors and contributors |
 | httpx | BSD-3-Clause | Encode OSS Ltd. |
 | sqlalchemy | MIT | SQLAlchemy Authors |
 | psycopg2-binary | LGPL-3.0 with exceptions | Federico Di Gregorio, Daniele Varrazzo |
-| kafka-python | Apache-2.0 | Dana Powers, David Arthur |
-| React / ReactDOM | MIT | Meta Platforms, Inc. |
+| kafka-python | Apache-2.0 | Dana Powers, David Arthur and contributors |
+| React / ReactDOM | MIT | Facebook, Inc. and its affiliates |
 | @babel/standalone | MIT | Sebastian McKenzie and contributors |
 | Inter, JetBrains Mono (fonts) | SIL OFL-1.1 | The Inter / JetBrains Mono Authors |
 | ruff, mypy, pytest (dev only) | MIT | Their respective authors |

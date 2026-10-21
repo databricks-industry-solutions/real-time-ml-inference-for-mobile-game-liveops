@@ -1,7 +1,7 @@
 # Deployment guide
 
-The README covers the quick start. This guide covers the optional real-time path
-(Azure Event Hubs), the deploy order it needs and the gotchas that only show up on a
+The README covers the overview. This guide covers the Azure Event Hubs setup, the
+deploy order it needs and the gotchas that only show up on a
 live workspace.
 
 All values come from `.env` (copied from `env.example`). Load it before every command:

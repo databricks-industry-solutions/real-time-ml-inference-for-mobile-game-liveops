@@ -35,10 +35,10 @@ variables:
     description: "Force feature-store re-materialization after a feature-set change. Resolved at `bundle deploy`, not `bundle run`."
     default: "false"
   kafka_bootstrap:
-    description: "OPTIONAL Kafka bootstrap (host:port), e.g. `<namespace>.servicebus.windows.net:9093` for Azure Event Hubs. EMPTY (default) = synthetic in-workspace stream, no external broker needed."
+    description: "REQUIRED. Kafka bootstrap (host:port), e.g. `<namespace>.servicebus.windows.net:9093` for Azure Event Hubs. setup_stream, preprocess and the producer fail if it is empty."
     default: ""
   kafka_uc_connection:
-    description: "OPTIONAL UC Kafka connection (SASL/PLAIN) the managed Streaming Feature View authenticates with. Created out-of-band by provisioning/provision_databricks.sh."
+    description: "UC Kafka connection (SASL/PLAIN) the managed Streaming Feature View authenticates with; created by provisioning/provision_databricks.sh. Empty = mTLS against a self-managed broker (certs on the UC Volume)."
     default: ""
   session_end_ts:
     description: "Pinned session-window end (unix seconds). generate_data and setup_stream both use it so label and backfill windows match. Set once per install."

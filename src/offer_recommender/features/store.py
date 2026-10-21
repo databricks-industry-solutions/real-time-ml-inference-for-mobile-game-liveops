@@ -1,22 +1,21 @@
 """Feature store wiring on the new Feature Views framework (Batch + realtime).
 
 Uses databricks-feature-engineering == 0.16.1 (Public Preview Feature Views), NOT
-the legacy create_table / FeatureLookup / publish_table API. Two feature groups
-keyed by `player_id`, both defined as `Feature` objects and both fed to serving
-through the Lakebase-backed online store:
+the legacy create_table / FeatureLookup / publish_table API. Feature groups keyed
+by `player_id`, all defined as `Feature` objects:
 
 - OFFLINE (slow-moving): a Batch Feature View over the offline player-feature
   Delta table. Lifetime spend, tenure, historical LTV, etc.
-- REAL-TIME: a Feature View over the real-time player-feature Delta table that
-  the synthetic stream (or, in production, a Kafka Streaming Feature View) keeps
-  fresh. Events-this-session, gem balance, session depth, etc.
+- REAL-TIME: request-time passthrough values (gem_balance,
+  minutes_since_last_purchase, match_count) that the caller sends with each scoring
+  request (`RequestSource`, see `_request_features`); not materialized online.
 - STREAMING AGGREGATES: 6 rolling-window aggregates (gems_spent_15m, avg_gem_balance_15m,
   match_events_15m, ...) looked up online by player_id. Managed Streaming Feature View:
   each column is an AggregationFunction + RollingWindow over the Kafka match StreamSource
   (see `_streaming_agg_features`). Requires the match stream (create_match_stream)
   to exist and the producer to emit the source signals.
 
-The OFFLINE and REAL-TIME groups are `ColumnSelection` (latest-value): the model
+The OFFLINE group is `ColumnSelection` (latest-value): the model
 trains on the SparkML-transformed impression log where those features are recorded
 as point-in-time values, so serving must emit the same values. They materialize as
 an always-current VIEW and so cannot take a `CronSchedule` (the client rejects it);
@@ -940,8 +939,7 @@ def create_match_stream(
     `offer-reco-kafka` secret scope. Hostname verification is disabled because the
     broker cert's SAN is the IP, not a DNS name. The managed ingestion pipeline
     lands each match event in `TABLE_MATCH_INGEST`; publish_features derives the
-    real-time feature source from there. Only used when RECO_KAFKA_BOOTSTRAP is
-    set; the synthetic stream is the default otherwise.
+    real-time feature source from there. Requires RECO_KAFKA_BOOTSTRAP.
 
     `backfill_table` (optional): full name of a Delta table of historical login
     events (see data/match_backfill.py) that the managed ingestion pipeline MERGEs

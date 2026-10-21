@@ -27,11 +27,12 @@ set -a && source .env && set +a
 
 ---
 
-## 0. Probe Databricks Apps egress first (real-time path only)
+## 0. Probe Databricks Apps egress first
 
-Serverless **jobs** and **Apps** do not share egress rules. A working producer job tells
-you nothing about whether the App can reach the broker. Outbound ports differ per
-workspace. Before building anything, deploy a ~10-line probe App that opens a TCP+TLS
+Outbound access for Apps and serverless jobs is governed by the workspace's network
+policy, but in practice they can still differ: we saw an App unable to reach port 9093
+in a workspace where the producer job reached it fine. A working producer job does not
+prove the App can reach the broker. Before building anything, deploy a ~10-line probe App that opens a TCP+TLS
 connection (`socket.create_connection((host, 9093))` + `ssl` wrap) to the Event Hubs
 namespace. Curl it with `databricks auth token` as the bearer.
 
@@ -59,8 +60,9 @@ Both scripts in `provisioning/` are idempotent and never delete anything.
    `DATABRICKS_CONFIG_PROFILE`). Puts `eventhub_connection_string` + `bootstrap` into the
    `offer-reco-kafka` scope and creates the UC Kafka connection named
    `BUNDLE_VAR_kafka_uc_connection`. Bundles have no `connections` resource type, which
-   is why this step is a script. The KAFKA connection options are `user` / `password` +
-   `sasl_mechanism` only; the API rejects `sasl_username` / `security_protocol`.
+   is why this step is a script. In our runs the KAFKA connection accepted `user` /
+   `password` + `sasl_mechanism` and rejected `sasl_username` / `security_protocol`
+   (observed; the docs don't list these option names).
 
 UC connections are **metastore-scoped**, so the connection name must be unique on a
 shared metastore. Secrets are **workspace-scoped**. Re-creating the namespace mints a new
@@ -123,7 +125,7 @@ To ship app code changes without touching scope ACLs, use
 
 ## Gotcha quick reference
 
-- Apps egress differs from jobs egress: probe first.
+- Apps egress can differ from jobs egress: probe first.
 - Deploy the pipeline before the app (serving-endpoint dependency).
 - Start the producer before stream setup on an empty hub.
 - Keep `mode: production` on targets: development-mode schema prefixing breaks the

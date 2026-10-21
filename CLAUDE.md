@@ -72,8 +72,10 @@ Serverless / bundles:
   schema name that the streaming materialization's Lakebase sink rejects.
 - Bump the wheel `version` in pyproject on every code change to a job, or serverless may
   install a cached wheel and the change silently does not take effect.
-- Preprocess's SparkML fit can intermittently hit `CONNECT_ML.MODEL_SIZE_OVERFLOW` on a
-  reused warm serverless session (cache accumulation, not the model). Keep the
+- Serverless caps the Spark ML model cache at 1 GB per session and 100 MB per model,
+  and neither limit can be changed; the docs say to free the cache by deleting Python
+  references to models. Preprocess's fitted model is tiny, yet we saw
+  `MODEL_SIZE_OVERFLOW` intermittently on reused warm sessions. Keep the
   `del model, transformed; gc.collect()` hygiene; re-run on a cold session if it trips.
 
 AI Runtime / Ray:

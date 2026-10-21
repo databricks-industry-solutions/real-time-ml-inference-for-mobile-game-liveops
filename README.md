@@ -61,7 +61,9 @@ set -a && source .env && set +a
 `BUNDLE_VAR_<name>` entries set the bundle variables declared in `databricks.yml`; the
 CLI reads them natively. `EH_*` entries drive the Event Hubs provisioning script. To
 keep several deployments side by side, add your own targets to a git-ignored
-`*.local.yml` file, which `databricks.yml` includes automatically.
+`*.local.yml` file, which `databricks.yml` includes automatically. Values set in the
+environment take precedence over a target's `variables`, so leave a setting out of
+`.env` if a target should supply it.
 
 ## Deploy
 

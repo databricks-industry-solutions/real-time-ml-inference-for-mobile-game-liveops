@@ -38,6 +38,22 @@ from offer_recommender.training.ray_air import (
 logger = get_logger(__name__)
 
 
+def attach_cluster() -> None:
+    """Attach to the Ray cluster `ray_bootstrap.sh` started, shipping this package.
+
+    Ray worker processes on an `ai_runtime_task` do not inherit the driver's
+    PYTHONPATH, so the `offer_recommender` package travels in the job's
+    `runtime_env` instead (otherwise the TrainController fails to unpickle it).
+    No-op if Ray is already initialized.
+    """
+    import ray
+
+    import offer_recommender
+
+    if not ray.is_initialized():
+        ray.init(address="auto", runtime_env={"py_modules": [offer_recommender]})
+
+
 def _wait_for_gpus(expected_gpus: int, timeout_s: float, poll_s: float = 5.0) -> int:
     """Block until the Ray cluster reports `expected_gpus` GPUs (or timeout).
 
@@ -88,9 +104,8 @@ def train_multinode(
     weights).
 
     Runs on node 0 ONLY (the bootstrap script gates the driver on NODE_RANK=0).
-    Unlike the single-node path, `air` + the bootstrap already started the Ray
-    head and joined every worker node into ONE cluster, so this attaches with
-    `ray.init(address="auto")` (NOT `ray_launch`, which is single-node) and sets
+    The bootstrap already started the Ray head and joined every worker node into
+    ONE cluster, so this attaches with `attach_cluster()` and sets
     `num_workers` to the total GPU count so DDP spans all nodes. The trained
     weights are read out as bytes here (the Ray Result/Checkpoint object does not
     survive being returned across process boundaries).
@@ -107,13 +122,11 @@ def train_multinode(
     Returns:
         (metrics, model_state_bytes); register_model reads the same `model_state.pt`.
     """
-    import ray
 
     cfg = train_config or TrainConfig()
 
     # Attach to the head the bootstrap started; do NOT start a new local cluster.
-    if not ray.is_initialized():
-        ray.init(address="auto")
+    attach_cluster()
 
     num_workers = _wait_for_gpus(total_gpus, gpu_wait_timeout_s)
 

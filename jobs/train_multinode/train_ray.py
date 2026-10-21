@@ -1,18 +1,18 @@
 """Node-0 driver for multi-node Ray Train on the Databricks AI Runtime.
 
-Invoked by `workload.yaml`'s bootstrap ONLY on node 0 (NODE_RANK=0), AFTER
+Invoked by `ray_bootstrap.sh` ONLY on node 0 (NODE_RANK=0), AFTER
 `ray start --head` and the worker nodes' `ray start --address=...` have formed one
 Ray cluster spanning all provisioned nodes. This process attaches to that cluster
 and fits the SAME `TorchTrainer` the single-node pipeline uses, with one DDP worker
 per GPU across every node.
 
-All coordinates come from environment variables set by the `air` workload (the
-launcher renders them into `workload.yaml`'s `env_variables`, so nothing is
-hardcoded and no secret is committed):
+All coordinates come from environment variables exported by `ray_bootstrap.sh`,
+so nothing is hardcoded and no secret is committed:
 
-  RECO_CATALOG / RECO_SCHEMA   UC location (DAB-resolved per target) -> Volume path
-  RECO_TOTAL_GPUS              total GPUs provisioned (== compute.num_accelerators)
-  RECO_EPOCHS                  optional training epochs (defaults to TrainConfig)
+  RECO_CATALOG / RECO_SCHEMA   UC location (deploy-time bundle variables, from the
+                               task's hyperparameters.yaml) -> Volume path
+  RECO_EPOCHS                  training epochs (same source)
+  RECO_TOTAL_GPUS              NUM_NODES x LOCAL_WORLD_SIZE (set by AI Runtime)
 
 The training data is read as parquet from the UC Volume (staged by preprocess),
 so no SQL warehouse / host / token is needed on the GPU node.
@@ -40,8 +40,8 @@ def _require(name: str) -> str:
     value = os.environ.get(name)
     if not value:
         raise RuntimeError(
-            f"{name} is not set; the multi-node driver expects it from the "
-            "air workload's env_variables (rendered by train_multinode_launcher.py)."
+            f"{name} is not set; the multi-node driver expects ray_bootstrap.sh "
+            "to export it."
         )
     return value
 

@@ -18,8 +18,8 @@ __pycache__/
 # Databricks
 .databricks/
 databricks.yml.bak
-# Rendered multi-node air workload (contains a short-lived token at launch)
-jobs/train_multinode/workload.rendered.yaml
+# Rendered at bundle deploy by the gpu_task_config artifact
+jobs/*/hyperparameters.yaml
 
 # Test + build outputs
 test_output/

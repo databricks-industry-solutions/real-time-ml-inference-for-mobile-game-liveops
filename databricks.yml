@@ -9,6 +9,19 @@ artifacts:
     type: whl
     build: uv build --wheel
     path: .
+  # Renders each GPU task's hyperparameters.yaml from this deploy's variables. AI
+  # Runtime exposes it as HYPERPARAMETERS_PATH and jobs/train_multinode/ray_bootstrap.sh
+  # exports its keys, so deploy-time values reach the GPU nodes without a preview.
+  gpu_task_config:
+    path: .
+    build: |
+      python3 jobs/gpu_task_config.py jobs/train_multinode/hyperparameters.yaml RECO_CATALOG=${var.catalog} RECO_SCHEMA=${var.schema} RECO_EPOCHS=${var.train_epochs}
+      python3 jobs/gpu_task_config.py jobs/tune/hyperparameters.yaml RECO_CATALOG=${var.catalog} RECO_SCHEMA=${var.schema}
+
+# The rendered hyperparameters.yaml files are git-ignored but must reach the workspace.
+sync:
+  include:
+    - jobs/*/hyperparameters.yaml
 
 # Every deployment-specific value is a bundle variable. Set them in `.env` (copied
 # from `env.example`) as BUNDLE_VAR_<name>=...; the Databricks CLI reads those

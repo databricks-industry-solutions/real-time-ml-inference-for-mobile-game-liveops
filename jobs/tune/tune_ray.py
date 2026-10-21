@@ -5,7 +5,7 @@ and does not need HPO, but this demonstrates the sanctioned Ray Tune pattern on 
 AI Runtime -- ASHA early-stopping over a small search space, one GPU per trial, N
 concurrent trials across the provisioned nodes, best config logged to MLflow.
 
-Runs under the same `air` CLI + `ray_bootstrap.sh` pattern as training (node 0 runs
+Runs as an `ai_runtime_task` under the same `ray_bootstrap.sh` as training (node 0 runs
 this driver after the Ray cluster forms). It reads the SAME training_set parquet off
 the UC Volume that training uses, and reuses the pure-PyTorch `core.train_model` +
 `evaluate.heldout_metrics` as the per-trial train+eval so the trial fn is unit-
@@ -141,7 +141,9 @@ def main() -> None:
     with open(f"{uc.volume_path}/transform_params.json") as f:
         params = TransformParams.from_json(f.read())
 
-    ray.init(address="auto")
+    from offer_recommender.training.ray_multinode import attach_cluster
+
+    attach_cluster()
     # file_extensions skips Spark's 0-byte marker files (_SUCCESS/_committed_*/
     # _started_*) that would otherwise fail parquet parsing.
     pdf = ray.data.read_parquet(

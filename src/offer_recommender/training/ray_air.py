@@ -1,11 +1,11 @@
 """Ray Train (plain-PyTorch `TorchTrainer`) on the Databricks AI Runtime.
 
-Training runs on serverless GPU via the sanctioned `air` CLI + workload-YAML
-pattern (see `jobs/train_multinode/`): a bootstrap script starts `ray start --head`
-on node 0 and joins the worker nodes into ONE Ray cluster, then the node-0 driver
-attaches with `ray.init(address="auto")` and fits the `TorchTrainer` below with one
-DDP worker per GPU. The workload uses the named AI env `databricks_ai_v5` (ray +
-torch preinstalled), so there is no per-run pip install.
+Training runs on serverless GPU as an `ai_runtime_task` (see `jobs/train_multinode/`):
+a bootstrap script starts `ray start --head` on node 0 and joins the worker nodes
+into ONE Ray cluster, then the node-0 driver attaches (`ray_multinode.attach_cluster`)
+and fits the `TorchTrainer` below with one DDP worker per GPU. The task runs in the
+Databricks AI environment (Ray + PyTorch preinstalled), so there is no per-run pip
+install.
 
 Data crosses no Spark boundary: the GPU node has NO SparkSession, so training reads
 the `training_set` that `preprocess` stages as PARQUET on the UC Volume via
@@ -188,6 +188,7 @@ def _fit_ray_train(
     Result/Checkpoint object does not survive being pickled back across the
     subprocess boundary.
     """
+    import datetime
     from pathlib import Path
 
     from ray.train import CheckpointConfig, RunConfig, ScalingConfig
@@ -201,7 +202,13 @@ def _fit_ray_train(
         scaling_config=ScalingConfig(num_workers=scale.gpus, use_gpu=True),
         datasets={"train": dataset},
         run_config=RunConfig(
-            name="offer-reco",
+            # Unique per run: a fixed name under the persistent storage_path makes Ray
+            # restore the previous run's snapshot (a stale resume, and a crash when
+            # the snapshot came from another Ray version). Every run starts fresh.
+            # ponytail: one small run dir per training on the Volume; prune if it grows.
+            name=datetime.datetime.now(datetime.UTC).strftime(
+                "offer-reco-%Y%m%dT%H%M%S"
+            ),
             checkpoint_config=CheckpointConfig(num_to_keep=1),
             # MULTI-NODE requires a shared storage_path (UC Volume) all nodes can
             # reach; without it Ray defaults to a head-node-local dir the workers

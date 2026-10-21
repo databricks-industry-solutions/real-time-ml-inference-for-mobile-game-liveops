@@ -22,8 +22,9 @@ streaming and request-time) are generally available.
 2. **Preprocessing:** a SparkML `PipelineModel` (log1p, StringIndexer, StandardScaler),
    point-in-time joined with the streaming features. Its fitted parameters are exported
    and bundled into the model, so serving needs no Spark.
-3. **Training:** Ray Train `TorchTrainer` on the AI Runtime via the `air` CLI and a
-   workload YAML. One GPU by default; the same code scales to multi-node `GPU_8xH100`.
+3. **Training:** Ray Train `TorchTrainer` on the AI Runtime, as a native
+   `ai_runtime_task` in the job. One GPU by default; the same code scales to multi-node
+   (for example 2 x `GPU_8xH100`).
 4. **Features:** declarative Feature Views. Offline features materialize from Delta;
    rolling-window streaming features (15 minutes) come from a managed Streaming Feature
    View over Kafka. Both sync to the Lakebase online store.
@@ -137,7 +138,6 @@ below.
 | databricks-sdk | Apache-2.0 | Databricks, Inc. |
 | databricks-feature-engineering | Databricks Proprietary License | Databricks, Inc. |
 | databricks-feature-lookup | Databricks Proprietary License | Databricks, Inc. |
-| databricks-air | Not declared in package metadata | Databricks, Inc. |
 | fastapi | MIT | Sebastián Ramírez |
 | uvicorn | BSD-3-Clause | Encode OSS Ltd. |
 | uvloop | MIT / Apache-2.0 | The uvloop authors and contributors |

@@ -16,12 +16,10 @@ set -a && source .env && set +a
 
 - A Unity Catalog-enabled workspace with **serverless** jobs and Databricks Apps.
 - **Databricks AI Runtime** (serverless GPU, Public Preview) available in your region.
-  The training workload uses the named AI environment `databricks_ai_v5`. With the
-  Python `air` CLI this project launches through, we had to enable the workspace preview
-  **"Serverless workspace base environment support in Jobs"** (Settings > Previews);
-  without it the launch failed with `Only custom base environments ... are supported`.
-  The current docs list no such requirement, so try without it first.
-- Databricks CLI, `uv` and (for the real-time path) the Azure CLI.
+  Training runs as an `ai_runtime_task` in the Databricks AI environment
+  (`databricks_ai_v6`).
+- Databricks CLI 1.6.0 or later (the `ai_runtime_task` job task type), `uv`, `python3`
+  (the deploy renders the GPU tasks' config) and the Azure CLI.
 - If public PyPI is blocked on your network, set `UV_INDEX_URL` in `.env` to a mirror;
   `uv build` fetches the build backend from it.
 
@@ -87,7 +85,9 @@ pipeline has run, so a first deploy would fail on the app. On a fresh workspace:
    `mv resources/app.yml.disabled resources/app.yml && databricks bundle deploy && databricks bundle run offer_recommender_console`
 
 Bundle variables (including `fs_reset` and the GPU settings) are resolved at
-`bundle deploy`, not `bundle run`: deploy with the values you want, then run.
+`bundle deploy`, not `bundle run`: the deployed job stores the resolved values (visible
+in `databricks jobs get` as literal task parameters), and `bundle run` replays them.
+Deploy with the values you want, then run.
 
 ---
 

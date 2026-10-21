@@ -35,9 +35,9 @@ Private, deployment-specific notes (if any) live in the git-ignored `CLAUDE.loca
    on serverless, PIT-joined with streaming features (NULL -> 0.0). Exports
    `TransformParams`; `model/transform.py` is the numpy twin used at serving, guarded by
    `tests/test_transform_parity.py`. Also writes `training_set_parquet` to the Volume.
-3. **Training** (`training/`, `jobs/train_multinode_launcher.py`, `jobs/train_multinode/`):
-   Ray Train `TorchTrainer` (plain PyTorch) via the `air` CLI + workload YAML +
-   `ray_bootstrap.sh`, single or multi node. Reads parquet off the UC Volume with
+3. **Training** (`training/`, `jobs/train_multinode/`): Ray Train `TorchTrainer` (plain
+   PyTorch) as a native `ai_runtime_task` (`command.sh` -> `ray_bootstrap.sh` on every
+   node), single or multi node. Reads parquet off the UC Volume with
    `ray.data.read_parquet`. Registration is a separate serverless Spark task
    (`jobs/register_model.py`) because `fe.log_model` needs Spark + the FE client.
 4. **Serving** (`serving/`, `jobs/deploy_serving.py`): pyfunc runs the numpy transform
@@ -67,7 +67,8 @@ Serverless / bundles:
 - Jobs use serverless environment version 5. SparkML needs environment 4+.
 - `requires-python = ">=3.12"` is a floor, not an exact pin (an exact pin gets the wheel
   rejected on serverless).
-- Bundle variables are resolved at `bundle deploy`, not `bundle run`.
+- Bundle variables are resolved at `bundle deploy`, not `bundle run` (the deployed job
+  stores literal values; check with `databricks jobs get`).
 - Targets use `mode: production`: development-mode schema prefixing produces a quoted
   schema name that the streaming materialization's Lakebase sink rejects.
 - Bump the wheel `version` in pyproject on every code change to a job, or serverless may
@@ -79,16 +80,22 @@ Serverless / bundles:
   `del model, transformed; gc.collect()` hygiene; re-run on a cold session if it trips.
 
 AI Runtime / Ray:
-- Training launches through the Python `air` CLI (`databricks-air`), which the docs now
-  mark deprecated in favor of `databricks air` in the Databricks CLI. The notes below are
-  observed behavior of the Python CLI.
-- The workload uses the named AI env `databricks_ai_v5` (Ray + PyTorch preinstalled). On
-  our workspace it only launched after enabling the "Serverless workspace base
-  environment support in Jobs" preview, and the CLI rejected `version:` without an inline
-  `dependencies:` list (the current docs list neither requirement).
-- A relative `code_source.snapshot.root_path` resolves from the workload YAML's directory,
-  so the launcher renders an absolute path. Launchers derive paths from `sys.argv[0]`
-  (`__file__` is undefined in a serverless spark_python_task).
+- GPU tasks are `ai_runtime_task`s (needs Databricks CLI 1.6.0+) in the Databricks AI
+  environment `workspace-base-environments/databricks_ai_v6` (Ray, PyTorch, MLflow
+  preinstalled). Do not go back to shelling out to the `air` CLI from a job: the
+  `databricks-air` Python CLI is deprecated.
+- Code is read from the bundle's synced workspace files (`ray_bootstrap.sh` derives the
+  repo root from its own path); `code_source_path` packaging is Private Preview, so it is
+  not used.
+- Deploy-time values reach the GPU nodes through `hyperparameters.yaml`, rendered beside
+  each `command.sh` by the `gpu_task_config` artifact build (`jobs/gpu_task_config.py`)
+  and exposed by AI Runtime as `HYPERPARAMETERS_PATH`. Job environment variables would
+  need a Beta workspace preview.
+- Serverless `spark_python_task`s have no `__file__`; use `sys.argv[0]`.
+- Ray worker processes on an `ai_runtime_task` do not inherit the driver's PYTHONPATH:
+  connect with `ray_multinode.attach_cluster()`, which ships `offer_recommender` via
+  `runtime_env={"py_modules": [...]}`, or the TrainController fails with
+  `No module named 'offer_recommender'`.
 - `read_parquet` on a Spark output dir needs `file_extensions=["parquet"]` (Spark's
   0-byte marker files otherwise fail as parquet).
 - Inside a Ray Tune function use `ray.tune.report`, not `ray.train.report`.
@@ -116,7 +123,8 @@ exact pin in pyproject + resources/jobs.yml):
   `impressions`, `players` and `session_window_bounds` so generate_data regenerates.
 - Never resize the online store on the hot path (`ensure_online_store` is create-only):
   a resize rotates credentials and wedges deployed endpoints' Lakebase auth ("No
-  available connection in 2s"). Recover by redeploying the endpoint config.
+  available connection in 2s"). Recover by redeploying the endpoint config. (Observed
+  on a live store; not re-tested, since reproducing it takes serving down.)
 
 Serving:
 - No SparkSession in the container: the transform runs from exported params.

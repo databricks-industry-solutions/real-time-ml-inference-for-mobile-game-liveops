@@ -1,26 +1,29 @@
-# Ray Train on the Databricks AI Runtime (`air` CLI)
+# Ray Train on the Databricks AI Runtime (`ai_runtime_task`)
 
 The pipeline's `train_multinode` task trains the ranker with Ray Train on serverless
-GPU. One workload covers both scales: AIR reads `compute.num_accelerators` /
-`accelerator_type` and provisions the nodes (GPUs-per-node from the accelerator
-type, e.g. `16` x `GPU_8xH100` = 2 nodes x 8 GPUs) and sets coordination env vars
-on each node (`NUM_NODES`, `NODE_RANK`, `LOCAL_WORLD_SIZE`, `MASTER_ADDR`,
-`MASTER_PORT`). `ray_bootstrap.sh` then forms **one** Ray cluster spanning the nodes
-(head port `RAY_HEAD_PORT`, default 6379; GPUs per node from `LOCAL_WORLD_SIZE`).
+GPU as a native `ai_runtime_task` (resources/jobs.yml). One task covers both scales:
+AI Runtime provisions `accelerator_count` GPUs of `accelerator_type` (GPUs-per-node
+from the type, e.g. `16` x `GPU_8xH100` = 2 nodes x 8 GPUs), runs `command.sh` on
+every node and sets coordination env vars (`NUM_NODES`, `NODE_RANK`,
+`LOCAL_WORLD_SIZE`, `MASTER_ADDR`, `MASTER_PORT`). `ray_bootstrap.sh` then forms
+**one** Ray cluster spanning the nodes (head port `RAY_HEAD_PORT`, default 6379; GPUs
+per node from `LOCAL_WORLD_SIZE`).
 
 Files:
-- `workload.yaml`: the `air` workload TEMPLATE (`{{PLACEHOLDER}}` tokens rendered
-  at launch). Uses the named AI environment `databricks_ai_v5` (Ray + PyTorch
-  preinstalled).
-- `ray_bootstrap.sh`: `ray start --head` on node 0, then runs the driver; workers
-  wait for the head port, `ray start --block` once and exit when the head stops.
+- `command.sh`: the task's command; sets `RAY_ENTRYPOINT` and runs the bootstrap.
+- `ray_bootstrap.sh`: exports the deploy-time config from `HYPERPARAMETERS_PATH`,
+  puts the synced `src/` on `PYTHONPATH`, then starts the Ray head on node 0 and runs
+  the driver; workers wait for the head port, `ray start --block` once and exit when
+  the head stops. Shared with the Ray Tune job (`jobs/tune/command.sh`).
+- `hyperparameters.yaml`: generated at `bundle deploy` by the `gpu_task_config`
+  artifact (`jobs/gpu_task_config.py`) with the catalog, schema and epochs; git-ignored.
 - `train_ray.py`: node-0 driver: waits for all GPUs to join, then fits with
   `num_workers = total GPUs`, reading the training set as parquet off the UC Volume.
-- `../train_multinode_launcher.py`: serverless task that installs
-  `databricks-air`, authenticates from the job context, renders `workload.yaml`
-  and runs `air run -f ... --watch`. This is the Python `air` CLI, which the docs now
-  mark deprecated in favor of `databricks air` in the Databricks CLI.
 - `src/offer_recommender/training/ray_multinode.py`: the reusable driver core.
+
+The task runs in the Databricks AI environment (`databricks_ai_v6`: Ray, PyTorch and
+MLflow preinstalled) and reads the code from the bundle's synced workspace files, so
+nothing is installed per run.
 
 ## Sizing (do not overclaim)
 

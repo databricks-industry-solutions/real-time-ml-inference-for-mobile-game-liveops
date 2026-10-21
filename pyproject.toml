@@ -36,7 +36,7 @@ dev = [
     "pytest>=8.0",
     "scikit-learn>=1.3",
     # FS client: store.py's create_match_stream / feature tests import it. Same
-    # pin as the `databricks` extra + resources/jobs.yml (Public Preview 0.16.1).
+    # pin as the `databricks` extra + resources/jobs.yml (0.16.1).
     "databricks-feature-engineering==0.16.1",
     # Arrow: mapInPandas / toPandas in the distributed-generation parity test.
     "pyarrow>=15",

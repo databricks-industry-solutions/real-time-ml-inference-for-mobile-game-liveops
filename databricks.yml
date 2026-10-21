@@ -26,7 +26,7 @@ variables:
     description: "Total GPUs for the AI Runtime training workload. AIR provisions num_accelerators / GPUs-per-node nodes (16 x GPU_8xH100 = 2 nodes)."
     default: "1"
   gpu_accelerator_type:
-    description: "AI Runtime accelerator: GPU_1xA10, GPU_1xH100 or GPU_8xH100. Multi-node exists only for GPU_8xH100."
+    description: "AI Runtime accelerator: GPU_1xA10, GPU_1xH100 or GPU_8xH100. Every node uses the same type; set train_gpus above the GPUs per node for multi-node."
     default: "GPU_1xA10"
   train_epochs:
     description: "Training epochs. Lower it (e.g. 3) for a fast smoke run."
@@ -44,7 +44,7 @@ variables:
     description: "Pinned session-window end (unix seconds). generate_data and setup_stream both use it so label and backfill windows match. Set once per install."
     default: "1785369600"
   login_rate:
-    description: "Synthetic logins/sec the producer emits. Keep it under ~200 unless the ranking endpoint is route-optimized (the standard serving path caps around 200 QPS)."
+    description: "Synthetic logins/sec the producer emits. Endpoints without route optimization are limited to 200 QPS per workspace, so keep it below that unless the ranking endpoint is route-optimized."
     default: "150"
   # Event Hubs auth is NOT a bundle variable: the SAS connection string lives in the
   # `offer-reco-kafka` secret scope (see resources/secrets.yml), put there by

@@ -1,6 +1,6 @@
 """Feature store wiring on the new Feature Views framework (Batch + realtime).
 
-Uses databricks-feature-engineering == 0.16.1 (Public Preview Feature Views), NOT
+Uses databricks-feature-engineering == 0.16.1 (Feature Views), NOT
 the legacy create_table / FeatureLookup / publish_table API. Feature groups keyed
 by `player_id`, all defined as `Feature` objects:
 

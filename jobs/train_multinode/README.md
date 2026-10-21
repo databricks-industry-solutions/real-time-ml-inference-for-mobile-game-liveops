@@ -3,9 +3,10 @@
 The pipeline's `train_multinode` task trains the ranker with Ray Train on serverless
 GPU. One workload covers both scales: AIR reads `compute.num_accelerators` /
 `accelerator_type` and provisions the nodes (GPUs-per-node from the accelerator
-type, e.g. `16` x `GPU_8xH100` = 2 nodes x 8 GPUs), sets per-node rendezvous env
-vars (`NODE_RANK`, `MASTER_ADDR`, `RAY_HEAD_PORT`, `GPUS_PER_NODE`,
-`LOCAL_WORLD_SIZE`). `ray_bootstrap.sh` then forms **one** Ray cluster spanning them.
+type, e.g. `16` x `GPU_8xH100` = 2 nodes x 8 GPUs) and sets coordination env vars
+on each node (`NUM_NODES`, `NODE_RANK`, `LOCAL_WORLD_SIZE`, `MASTER_ADDR`,
+`MASTER_PORT`). `ray_bootstrap.sh` then forms **one** Ray cluster spanning the nodes
+(head port `RAY_HEAD_PORT`, default 6379; GPUs per node from `LOCAL_WORLD_SIZE`).
 
 Files:
 - `workload.yaml`: the `air` workload TEMPLATE (`{{PLACEHOLDER}}` tokens rendered
@@ -17,7 +18,8 @@ Files:
   `num_workers = total GPUs`, reading the training set as parquet off the UC Volume.
 - `../train_multinode_launcher.py`: serverless task that installs
   `databricks-air`, authenticates from the job context, renders `workload.yaml`
-  and runs `air run -f ... --watch`.
+  and runs `air run -f ... --watch`. This is the Python `air` CLI, which the docs now
+  mark deprecated in favor of `databricks air` in the Databricks CLI.
 - `src/offer_recommender/training/ray_multinode.py`: the reusable driver core.
 
 ## Sizing (do not overclaim)

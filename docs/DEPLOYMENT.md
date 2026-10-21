@@ -16,10 +16,11 @@ set -a && source .env && set +a
 
 - A Unity Catalog-enabled workspace with **serverless** jobs and Databricks Apps.
 - **Databricks AI Runtime** (serverless GPU, Public Preview) available in your region.
-  The training workload uses the named AI environment `databricks_ai_v5`, which needs
-  the workspace preview **"Serverless workspace base environment support in Jobs"**
-  (Settings > Previews). Without it the launch fails with `Only custom base
-  environments ... are supported`.
+  The training workload uses the named AI environment `databricks_ai_v5`. With the
+  Python `air` CLI this project launches through, we had to enable the workspace preview
+  **"Serverless workspace base environment support in Jobs"** (Settings > Previews);
+  without it the launch failed with `Only custom base environments ... are supported`.
+  The current docs list no such requirement, so try without it first.
 - Databricks CLI, `uv` and (for the real-time path) the Azure CLI.
 - If public PyPI is blocked on your network, set `UV_INDEX_URL` in `.env` to a mirror;
   `uv build` fetches the build backend from it.
@@ -110,9 +111,11 @@ To ship app code changes without touching scope ACLs, use
 ## Serving notes
 
 - The app posts to the standard `/serving-endpoints/<name>/invocations` URL, which works
-  whether or not the endpoint is route-optimized. The standard path is capped around
-  200 QPS by the serving proxy, so keep `BUNDLE_VAR_login_rate` below that (default 150)
-  to avoid 429s.
+  whether or not the endpoint is route-optimized. Endpoints without route optimization
+  are limited to 200 QPS per workspace (route-optimized: 300,000), so keep
+  `BUNDLE_VAR_login_rate` below that (default 150) to avoid 429s. The limit is shared by
+  every non-route-optimized endpoint in the workspace, including the drill-down's
+  Feature Serving calls.
 - The model signature expects `event_ts` as a tz-naive timestamp; the app normalizes the
   producer's ISO-8601 `Z` timestamps before scoring.
 - Serverless GPU capacity is acquired on demand. A fresh workspace may wait on "Waiting

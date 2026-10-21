@@ -58,8 +58,8 @@ no `*`-unpack in `torch.cat`.
 
 The model is small and does not need multi-node. The only justification for distributed
 GPU is data-parallel throughput over a large impression log. Default is one GPU; frame
-multi-node `GPU_8xH100` as the same Ray code scaling to studio-scale data. AIR and
-Streaming Feature Views are Public Preview: never claim GA.
+multi-node `GPU_8xH100` as the same Ray code scaling to studio-scale data. AIR is Public
+Preview (the CLI is Beta): never claim GA. Feature Views are GA since 2026-10-12.
 
 ## Platform gotchas (binding)
 
@@ -77,11 +77,16 @@ Serverless / bundles:
   `del model, transformed; gc.collect()` hygiene; re-run on a cold session if it trips.
 
 AI Runtime / Ray:
-- The workload uses the named AI env `databricks_ai_v5` (Ray + PyTorch preinstalled),
-  which needs the "Serverless workspace base environment support in Jobs" preview. `air`
-  still requires an inline `dependencies:` list alongside `version:`.
-- `code_source.snapshot.root_path` must be absolute; launchers derive paths from
-  `sys.argv[0]` (`__file__` is undefined in a serverless spark_python_task).
+- Training launches through the Python `air` CLI (`databricks-air`), which the docs now
+  mark deprecated in favor of `databricks air` in the Databricks CLI. The notes below are
+  observed behavior of the Python CLI.
+- The workload uses the named AI env `databricks_ai_v5` (Ray + PyTorch preinstalled). On
+  our workspace it only launched after enabling the "Serverless workspace base
+  environment support in Jobs" preview, and the CLI rejected `version:` without an inline
+  `dependencies:` list (the current docs list neither requirement).
+- A relative `code_source.snapshot.root_path` resolves from the workload YAML's directory,
+  so the launcher renders an absolute path. Launchers derive paths from `sys.argv[0]`
+  (`__file__` is undefined in a serverless spark_python_task).
 - `read_parquet` on a Spark output dir needs `file_extensions=["parquet"]` (Spark's
   0-byte marker files otherwise fail as parquet).
 - Inside a Ray Tune function use `ray.tune.report`, not `ray.train.report`.

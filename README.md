@@ -12,8 +12,8 @@ streaming features from a Lakebase-backed online store and **Model Serving** plu
 **Databricks App** score every login live.
 
 The studio ("Nordfall Games") and its game ("Harvest Haven") are fictional; all data
-is synthetic. The Databricks AI Runtime and Streaming Feature Views are in Public
-Preview.
+is synthetic. The Databricks AI Runtime is in Public Preview; Feature Views (batch,
+streaming and request-time) are generally available.
 
 ## Architecture
 

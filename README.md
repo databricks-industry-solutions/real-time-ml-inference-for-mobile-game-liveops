@@ -44,8 +44,8 @@ consume them. The pipeline requires this stream; there is no broker-free mode.
 - A Unity Catalog-enabled Databricks workspace with serverless jobs, Model Serving,
   Databricks Apps and the AI Runtime (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for
   the required workspace preview).
-- [Databricks CLI](https://docs.databricks.com/dev-tools/cli/install.html) and
-  [uv](https://docs.astral.sh/uv/).
+- [Databricks CLI](https://docs.databricks.com/dev-tools/cli/install.html) 1.6.0 or
+  later (for the `ai_runtime_task` GPU jobs), [uv](https://docs.astral.sh/uv/) and `jq`.
 - An Azure subscription and the Azure CLI, for the Event Hubs namespace (created by
   `provisioning/provision_eventhub.sh`).
 
@@ -70,20 +70,33 @@ environment take precedence over a target's `variables`, so leave a setting out 
 
 A first deploy has a required order. Event Hubs and the UC connection come first, the
 producer must be running before stream setup and the app can only deploy after the
-pipeline has created its serving endpoints. Follow
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). In short:
+pipeline has created its serving endpoints. [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+explains each step:
 
 ```bash
 set -a && source .env && set +a
-provisioning/provision_eventhub.sh                       # Event Hubs namespace + topics
-databricks bundle deploy                                 # with resources/app.yml disabled
-provisioning/provision_databricks.sh                     # secrets + UC Kafka connection
-databricks bundle run offer_recommender_event_producer --no-wait
+provisioning/provision_eventhub.sh                    # Event Hubs namespace + topics
+mv resources/app.yml resources/app.yml.disabled       # the app needs the pipeline's endpoints
+databricks bundle deploy
+provisioning/provision_databricks.sh                  # secrets + UC Kafka connection
+export BUNDLE_VAR_producer_pause_status=UNPAUSED      # keep it in .env for later deploys
+databricks bundle deploy                              # starts the continuous event producer
 databricks bundle run offer_recommender_pipeline
+mv resources/app.yml.disabled resources/app.yml
+databricks bundle deploy
+# The app's service principal needs READ on the Kafka secret scope (app name: <prefix>-offers-<target>).
+provisioning/provision_databricks.sh --app-sp \
+  "$(databricks apps get offer-reco-offers-dev -o json | jq -r .service_principal_client_id)"
+databricks bundle run offer_recommender_console
 ```
 
 The pipeline generates data, sets up the stream, preprocesses, trains on serverless GPU,
 publishes features, registers the model and deploys the serving endpoints.
+
+The Ray Tune sweep is a separate job that is not part of the pipeline. After the
+pipeline has run, `databricks bundle run offer_recommender_tune` runs 8 ASHA trials
+over the learning rate and embedding width on four A10 GPUs. The best config is logged
+to the `offer_recommender_tune` MLflow experiment in your user folder.
 
 `databricks bundle destroy` (or `scripts/cleanup.sh`) removes the bundle-managed
 resources: jobs, app, schema, volume and secret scope. The serving endpoints, the

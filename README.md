@@ -4,6 +4,8 @@
 [![Unity Catalog](https://img.shields.io/badge/Unity_Catalog-Enabled-00A1C9?style=for-the-badge)](https://docs.databricks.com/en/data-governance/unity-catalog/index.html)
 [![Serverless](https://img.shields.io/badge/Serverless-Compute-00C851?style=for-the-badge)](https://docs.databricks.com/en/compute/serverless.html)
 
+## Overview
+
 A free-to-play studio ranks in-game gem offers for each player the moment they log
 in. This accelerator builds that loop end to end on Databricks: SparkML fits the
 feature transforms at scale, **Ray Train** trains a multi-head PyTorch ranker on the
@@ -15,30 +17,6 @@ The studio ("Nordfall Games") and its game ("Harvest Haven") are fictional; all 
 is synthetic. The Databricks AI Runtime is in Public Preview; Feature Views (batch,
 streaming and request-time) are generally available.
 
-## Architecture
-
-1. **Data:** synthetic players, offers and a shop-impression log in Unity Catalog, with
-   a learnable purchase model whose label depends on recent in-session activity.
-2. **Preprocessing:** a SparkML `PipelineModel` (log1p, StringIndexer, StandardScaler),
-   point-in-time joined with the streaming features. Its fitted parameters are exported
-   and bundled into the model, so serving needs no Spark.
-3. **Training:** Ray Train `TorchTrainer` on the AI Runtime, as a native
-   `ai_runtime_task` in the job. One GPU by default; the same code scales to multi-node
-   (for example 2 x `GPU_8xH100`).
-4. **Features:** declarative Feature Views. Offline features materialize from Delta;
-   rolling-window streaming features (15 minutes) come from a managed Streaming Feature
-   View over Kafka. Both sync to the Lakebase online store.
-5. **Serving:** the model is logged with its feature spec, so the `offer-ranker-rt`
-   endpoint looks up the batch and streaming features by `player_id`. The caller sends
-   the key, the login's request-time values (gem balance, minutes since last purchase,
-   match count, event time) and the candidate offers. A FastAPI + React app consumes the
-   login stream and shows a live board of scored decisions with a per-player feature
-   drill-down.
-
-Real-time events come from **Azure Event Hubs** (Kafka protocol): a serverless producer
-job writes synthetic logins and match events. The Streaming Feature View and the app
-consume them. The pipeline requires this stream; there is no broker-free mode.
-
 ## Prerequisites
 
 - A Unity Catalog-enabled Databricks workspace with serverless jobs, Model Serving,
@@ -49,7 +27,9 @@ consume them. The pipeline requires this stream; there is no broker-free mode.
 - An Azure subscription and the Azure CLI, for the Event Hubs namespace (created by
   `provisioning/provision_eventhub.sh`).
 
-## Configuration
+## Setup
+
+### Configure
 
 Every deployment-specific value lives in one git-ignored `.env` file; nothing
 workspace-specific is committed. `env.example` documents every setting:
@@ -66,7 +46,7 @@ keep several deployments side by side, add your own targets to a git-ignored
 environment take precedence over a target's `variables`, so leave a setting out of
 `.env` if a target should supply it.
 
-## Deploy
+### Deploy
 
 A first deploy has a required order. Event Hubs and the UC connection come first, the
 producer must be running before stream setup and the app can only deploy after the
@@ -103,6 +83,30 @@ resources: jobs, app, schema, volume and secret scope. The serving endpoints, th
 online store, the feature materializations, the UC connection and the Event Hubs
 namespace are created by the pipeline or the provisioning scripts and must be deleted
 separately.
+
+## Architecture
+
+1. **Data:** synthetic players, offers and a shop-impression log in Unity Catalog, with
+   a learnable purchase model whose label depends on recent in-session activity.
+2. **Preprocessing:** a SparkML `PipelineModel` (log1p, StringIndexer, StandardScaler),
+   point-in-time joined with the streaming features. Its fitted parameters are exported
+   and bundled into the model, so serving needs no Spark.
+3. **Training:** Ray Train `TorchTrainer` on the AI Runtime, as a native
+   `ai_runtime_task` in the job. One GPU by default; the same code scales to multi-node
+   (for example 2 x `GPU_8xH100`).
+4. **Features:** declarative Feature Views. Offline features materialize from Delta;
+   rolling-window streaming features (15 minutes) come from a managed Streaming Feature
+   View over Kafka. Both sync to the Lakebase online store.
+5. **Serving:** the model is logged with its feature spec, so the `offer-ranker-rt`
+   endpoint looks up the batch and streaming features by `player_id`. The caller sends
+   the key, the login's request-time values (gem balance, minutes since last purchase,
+   match count, event time) and the candidate offers. A FastAPI + React app consumes the
+   login stream and shows a live board of scored decisions with a per-player feature
+   drill-down.
+
+Real-time events come from **Azure Event Hubs** (Kafka protocol): a serverless producer
+job writes synthetic logins and match events. The Streaming Feature View and the app
+consume them. The pipeline requires this stream; there is no broker-free mode.
 
 ## Usage tracking
 

@@ -69,7 +69,11 @@ include:
   - "*.local.yml"
 
 # No workspace host here on purpose: it comes from DATABRICKS_CONFIG_PROFILE /
-# DATABRICKS_HOST (set in .env) or `-p <profile>`.
+# DATABRICKS_HOST (set in .env) or `-p <profile>`. mode: production requires an
+# explicit root_path; this one keeps one copy per deploying user and target.
+workspace:
+  root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+
 targets:
   # Both targets use mode: production (no dev_<user>_ object-name prefixing) so the UC
   # schema stays the literal `offer_recommender`: the streaming feature

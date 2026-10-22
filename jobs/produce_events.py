@@ -90,6 +90,8 @@ def main() -> None:
             "Deploy with --var kafka_bootstrap=<namespace>.servicebus.windows.net:9093."
         )
     conn = dbutils.secrets.get(KAFKA_SECRET_SCOPE, KAFKA_EVENTHUB_CONN_STRING_KEY)  # noqa: F821
+    # Event Hubs SASL/PLAIN: the username is the literal "$ConnectionString" and the
+    # password is the SAS connection string just read from the secret scope.
     jaas = (
         "kafkashaded.org.apache.kafka.common.security.plain.PlainLoginModule required "
         f'username="$ConnectionString" password="{conn}";'

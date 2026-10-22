@@ -91,6 +91,14 @@ online store, the feature materializations, the UC connection and the Event Hubs
 namespace are created by the pipeline or the provisioning scripts and must be deleted
 separately.
 
+## Usage tracking
+
+The app reports opens of its console page with
+[dbdemos-tracker](https://pypi.org/project/dbdemos-tracker/) so Databricks can see how
+often the demo is used. Each report carries the workspace ID, the demo name and the page
+path, plus a hashed user ID for `@databricks.com` users only. To turn it off, delete the
+`Tracker.add_tracker_fastapi` call in `app/app.py`.
+
 ## Layout
 
 - `src/offer_recommender/`: the ML package (data, preprocessing, model, training,
@@ -138,6 +146,7 @@ below.
 | databricks-sdk | Apache-2.0 | Databricks, Inc. |
 | databricks-feature-engineering | Databricks Proprietary License | Databricks, Inc. |
 | databricks-feature-lookup | Databricks Proprietary License | Databricks, Inc. |
+| dbdemos-tracker | Databricks License | Databricks, Inc. |
 | fastapi | MIT | Sebastián Ramírez |
 | uvicorn | BSD-3-Clause | Encode OSS Ltd. |
 | uvloop | MIT / Apache-2.0 | The uvloop authors and contributors |

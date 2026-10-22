@@ -25,6 +25,7 @@ import aggregate
 import catalog
 import login_consumer
 import metrics
+from dbdemos_tracker import Tracker
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -46,6 +47,16 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 app = FastAPI(title="Nordfall Offer Recommender")
+
+# Usage tracking (dbdemos-tracker, demo name = the repo name) so Databricks can see how
+# often the demo is used. Only "/" counts: the board's once-a-second API polls don't.
+# Telemetry must never stop the app, e.g. a local run without workspace auth.
+try:
+    Tracker.add_tracker_fastapi(
+        app, "real-time-ml-inference-for-mobile-game-liveops", patterns=[r"/$"]
+    )
+except Exception as e:
+    logger.warning("Usage tracking disabled: %s", e)
 
 # Start the Kafka login consumer (no-op unless RECO_KAFKA_BOOTSTRAP is set). When
 # active, the live board advances on real streamed logins; otherwise it stays idle.

@@ -24,3 +24,5 @@ psycopg2-binary>=2.9
 # app consumes the `logins` topic over mTLS to drive the live board. Harmless when
 # the Kafka path is off (import is lazy inside login_consumer).
 kafka-python>=2.0
+# Usage tracking: counts opens of the console page (see README "Usage tracking").
+dbdemos-tracker>=0.1.12,<0.2

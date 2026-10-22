@@ -77,12 +77,26 @@ pipeline has run, so a first deploy would fail on the app. On a fresh workspace:
    `mv resources/app.yml resources/app.yml.disabled && databricks bundle deploy`
 2. Run section 1, step 3 (secrets + UC connection), if using Event Hubs.
 3. Start the producer **before** the pipeline on a fresh/empty hub: the Streaming Feature
-   View reads from the LATEST offset, so stream setup waits until events arrive.
-   `databricks bundle run offer_recommender_event_producer --no-wait`
+   View reads from the LATEST offset, so stream setup waits until events arrive. The
+   producer is a continuous job: each run emits events for `RECO_PRODUCER_RUN_SECONDS`
+   (300 by default) and the continuous trigger relaunches it while it is unpaused. It
+   deploys `PAUSED` so an idle install costs nothing. `bundle run` on a paused job
+   starts a single run, so unpause it with the bundle variable:
+   `export BUNDLE_VAR_producer_pause_status=UNPAUSED && databricks bundle deploy`
+   Keep the variable in `.env`, or later deploys pause the producer again.
 4. Run the pipeline (creates the model and both serving endpoints):
    `databricks bundle run offer_recommender_pipeline`
-5. Re-enable and deploy the app, then start it:
-   `mv resources/app.yml.disabled resources/app.yml && databricks bundle deploy && databricks bundle run offer_recommender_console`
+5. Re-enable and deploy the app, grant its service principal READ on the secret scope
+   (section 3), then start it:
+   `mv resources/app.yml.disabled resources/app.yml && databricks bundle deploy`
+   `provisioning/provision_databricks.sh --app-sp <service_principal_client_id>`
+   `databricks bundle run offer_recommender_console`
+6. Optional, the Ray Tune sweep (not part of the pipeline; needs the pipeline's
+   preprocess output): `databricks bundle run offer_recommender_tune`. It runs 8 ASHA
+   trials over the learning rate and embedding width, one `GPU_1xA10` each, four at a
+   time. The task log prints `TUNE_BEST` and the run in the
+   `/Users/<you>/offer_recommender_tune` MLflow experiment records `best_lr`,
+   `best_embedding_dim` and `best_val_revenue_rmse_log`.
 
 Bundle variables (including `fs_reset` and the GPU settings) are resolved at
 `bundle deploy`, not `bundle run`: the deployed job stores the resolved values (visible
@@ -93,17 +107,16 @@ Deploy with the values you want, then run.
 
 ## 3. After every deploy
 
-`bundle deploy` resets bundle-owned resources to their declared state, which undoes two
-runtime changes:
+`bundle deploy` resets bundle-owned resources to their declared state:
 
 1. **App service principal READ on the secret scope.** The scope's declared permissions
    only cover the deploying user. The app SP id is not available for interpolation.
    Get it from `databricks apps get <app> -o json` (`service_principal_client_id`) and
    run `provisioning/provision_databricks.sh --app-sp <id>`. Without it the app's login
    consumer fails with `secret ... unreadable` and the board stays idle.
-2. **Producer pause state.** `producer.job.yml` declares the continuous job `PAUSED`, so
-   unpause it again (Jobs UI, or `databricks jobs update` with
-   `continuous.pause_status = UNPAUSED`).
+2. **Producer pause state.** Each deploy sets it from `producer_pause_status` (default
+   `PAUSED`). Keep `BUNDLE_VAR_producer_pause_status=UNPAUSED` in `.env` while you want
+   the live stream; set it back to `PAUSED` and deploy to stop it.
 
 To ship app code changes without touching scope ACLs, use
 `databricks bundle run offer_recommender_console` after a deploy.
@@ -130,4 +143,5 @@ To ship app code changes without touching scope ACLs, use
 - Start the producer before stream setup on an empty hub.
 - Keep `mode: production` on targets: development-mode schema prefixing breaks the
   streaming feature materialization's Lakebase sink.
-- Re-grant the app SP secret READ and unpause the producer after every deploy.
+- Re-grant the app SP secret READ after every deploy.
+- Keep `BUNDLE_VAR_producer_pause_status=UNPAUSED` set while you want the live stream.

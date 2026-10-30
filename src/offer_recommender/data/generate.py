@@ -9,8 +9,8 @@ Produces three reproducible datasets with no real PII:
   horizon, and whether the offer was purchased).
 
 The numpy core (`generate_frames`) runs locally for tests and small demos and
-returns pandas DataFrames. `write_delta` is the thin Spark wrapper used by the
-Databricks job to produce the genuinely large impression log that makes
+returns pandas DataFrames. `write_landing` is the thin Spark wrapper used by the
+Databricks job to land the genuinely large impression log that makes
 data-parallel training honest.
 
 Causal structure (post data-realism pass):
@@ -708,9 +708,9 @@ def generate_frames_spark(spark, config: GenConfig | None = None):
     # ONE distributed generation pass. Impressions carry every player column, so
     # `players` is derived by dedup -- but to avoid re-running the mapInPandas a
     # second time (lazy DataFrames re-execute per action; .cache() is rejected on
-    # serverless: NOT_SUPPORTED_WITH_SERVERLESS PERSIST TABLE), write_delta writes
-    # impressions to Delta FIRST, then reads that persisted table back to derive
-    # players. Here we just return the lazy impressions DF + the player-column list.
+    # serverless: NOT_SUPPORTED_WITH_SERVERLESS PERSIST TABLE), write_landing writes
+    # impressions to the landing volume once and the ingest pipeline derives players
+    # from the refined table. Here we just return the lazy impressions DF + columns.
     impressions_sdf = pid_sdf.mapInPandas(_gen_impressions, schema=impressions_schema)
     offers_sdf = spark.createDataFrame(offers)
     return (
@@ -722,80 +722,52 @@ def generate_frames_spark(spark, config: GenConfig | None = None):
     )
 
 
-def write_delta(
-    spark, catalog: str, schema: str, config: GenConfig | None = None
+def write_landing(
+    spark, catalog: str, schema: str, volume: str, config: GenConfig | None = None
 ) -> None:
-    """Generate the datasets (distributed) and write them as Delta tables.
+    """Generate the datasets (distributed) and land them as raw Parquet files.
 
+    Impressions and offers land under ``/Volumes/<catalog>/<schema>/<volume>/landing``;
+    the Lakeflow ingest pipeline (``pipelines/ingest/``) turns them into the refined
+    ``impressions``, ``players`` and ``offers`` tables every downstream stage reads.
     Also writes a one-row ``session_window_bounds`` table with the exact
     ``ext_window_start_s``, ``ext_window_end_s``, ``seed`` and ``span_days`` so
     ``setup_stream.py`` anchors the backfill window bounds exactly, closing the
     label-feature alignment gap.
     """
-    from pyspark.sql import functions as sf
-
-    from offer_recommender.config import TABLE_SESSION_WINDOW_BOUNDS
+    from offer_recommender.config import LANDING_DIR, TABLE_SESSION_WINDOW_BOUNDS
 
     cfg = config or GenConfig()
+    landing = f"/Volumes/{catalog}/{schema}/{volume}/{LANDING_DIR}"
     logger.info(
         "Generating synthetic data (distributed): n_players=%d, n_offers=%d, "
-        "impressions_per_player=%d, seed=%d -> %s.%s",
+        "impressions_per_player=%d, seed=%d -> %s",
         cfg.n_players,
         cfg.n_offers,
         cfg.impressions_per_player,
         cfg.seed,
-        catalog,
-        schema,
+        landing,
     )
 
     (
-        player_cols,
+        _player_cols,
         offers_sdf,
         impressions_sdf,
         _ext_window_start_s,
         _ext_window_end_s,
     ) = generate_frames_spark(spark, cfg)
 
-    imp_fqn = f"{catalog}.{schema}.impressions"
-
     total_start = time.perf_counter()
-    # Write impressions FIRST (the ONE distributed generation), then derive players
-    # by DEDUP of the PERSISTED impressions table -- reading it back is cheap and
-    # avoids re-running the mapInPandas (.cache() is unsupported on serverless).
-    t0 = time.perf_counter()
-    (
-        impressions_sdf.withColumn("event_date", sf.to_date("event_ts"))
-        .write.mode("overwrite")
-        .option("overwriteSchema", "true")
-        .partitionBy("event_date")
-        .format("delta")
-        .saveAsTable(imp_fqn)
-    )
-    logger.info(
-        "Wrote %s in %.1fs (distributed, partitioned by event_date).",
-        imp_fqn,
-        time.perf_counter() - t0,
-    )
-
-    players_sdf = (
-        spark.table(imp_fqn).select(*player_cols).dropDuplicates(["player_id"])
-    )
-    for name, sdf, partition in (
-        ("players", players_sdf, None),
-        ("offers", offers_sdf, None),
-    ):
-        fqn = f"{catalog}.{schema}.{name}"
+    # Each run lands a full snapshot (overwrite), so the ingest pipeline task runs
+    # with full_refresh; players are derived from impressions inside the pipeline.
+    for name, sdf in (("impressions", impressions_sdf), ("offers", offers_sdf)):
         t0 = time.perf_counter()
-        writer = (
-            sdf.write.mode("overwrite")
-            .option("overwriteSchema", "true")
-            .format("delta")
-        )
-        writer.saveAsTable(fqn)
+        sdf.write.mode("overwrite").parquet(f"{landing}/{name}")
         logger.info(
-            "Wrote %s%s in %.1fs (distributed).",
-            fqn,
-            f" (partitioned by {partition})" if partition else "",
+            "Landed raw %s at %s/%s in %.1fs (distributed).",
+            name,
+            landing,
+            name,
             time.perf_counter() - t0,
         )
 
@@ -823,6 +795,6 @@ def write_delta(
     )
 
     logger.info(
-        "generate_data complete: 4 tables written in %.1fs total.",
+        "generate_data complete: raw files landed in %.1fs total.",
         time.perf_counter() - total_start,
     )

@@ -174,7 +174,7 @@ def test_spark_distributed_matches_numpy(spark):
     Spark (mapInPandas, never collecting to the driver). Its per-player output must
     be bit-identical to the single-process numpy path (per-player md5 RNG ->
     shard-invariant), so the distributed job produces the SAME data. Exercises the
-    real mapInPandas distribution; the subsequent Delta write in write_delta is
+    real mapInPandas distribution; the subsequent Delta write in write_landing is
     plain I/O (not tested here -- local Spark has no Delta data source).
     """
     import pandas as pd
@@ -209,7 +209,7 @@ def test_spark_distributed_matches_numpy(spark):
     )
     try:
         imp_sp = impressions_sdf.toPandas()
-        # players = dedup of impressions (same derivation write_delta uses).
+        # players = dedup of impressions (same derivation write_landing uses).
         players_sp = (
             imp_sp[player_cols].drop_duplicates("player_id").reset_index(drop=True)
         )

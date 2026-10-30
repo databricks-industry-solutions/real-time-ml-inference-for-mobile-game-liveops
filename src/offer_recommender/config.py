@@ -71,6 +71,9 @@ TABLE_PLAYERS = "players"
 TABLE_IMPRESSIONS = "impressions"
 TABLE_OFFLINE_FEATURES = "player_features_offline"
 TABLE_TRAINING = "training_set"
+# Raw landing folder (under the project volume) that generate_data writes and the
+# Lakeflow ingest pipeline (pipelines/ingest/) reads with Auto Loader.
+LANDING_DIR = "landing"
 
 # Registered model + serving endpoint names.
 MODEL_NAME = "offer_ranker"

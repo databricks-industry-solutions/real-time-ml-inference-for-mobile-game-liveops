@@ -1,0 +1,20 @@
+# Lakeflow Spark Declarative Pipeline: raw landed files -> refined Unity Catalog
+# tables. generate_data lands impressions and offers as Parquet in the project
+# volume; Auto Loader ingests them into bronze streaming tables and the pipeline
+# publishes the refined impressions, players and offers tables (with data-quality
+# expectations) that every downstream stage reads. The pipeline job runs it as the
+# `ingest` task with full_refresh, because each generate_data run lands a full
+# snapshot; a production feed that only adds new files would drop full_refresh.
+resources:
+  pipelines:
+    offer_recommender_ingest:
+      name: "[${bundle.target}] offer-recommender ingest"
+      catalog: ${var.catalog}
+      schema: ${resources.schemas.offer_recommender_schema.name}
+      serverless: true
+      continuous: false
+      configuration:
+        landing_path: /Volumes/${var.catalog}/${resources.schemas.offer_recommender_schema.name}/${resources.volumes.offer_recommender_artifacts.name}/landing
+      libraries:
+        - glob:
+            include: ../pipelines/ingest/**

@@ -65,7 +65,7 @@ def _read_window_bounds(
     """Read the exact window bounds persisted by ``generate_data``.
 
     Reads ``window_start_s``, ``window_end_s``, and ``seed`` from the
-    ``session_window_bounds`` Delta table written by ``write_delta``.  These are
+    ``session_window_bounds`` Delta table written by ``write_landing``.  These are
     the EXACT integer-second floats that ``generate_frames`` passed to
     ``window_counts_batch`` when computing the purchase labels, so the backfill
     built with these bounds has 0% row-level disagreement with the labels.

@@ -246,7 +246,7 @@ def test_persisted_bounds_match_label_bounds(spark) -> None:
     This is the production-path guard for the CRITICAL fix-round finding.  It:
     1. Generates frames with a fixed GenConfig (deterministic end_ts).
     2. Reconstructs ext_window_start_s / ext_window_end_s using the SAME formula
-       as write_delta (integer seconds, -15d extension).
+       as write_landing (integer seconds, -15d extension).
     3. Asserts that the values written to session_window_bounds equal those exact
        floats (float equality, no tolerance).
     4. Builds the backfill with the PERSISTED bounds and verifies that the
@@ -267,7 +267,7 @@ def test_persisted_bounds_match_label_bounds(spark) -> None:
     )
     _players, _offers, _impressions = generate.generate_frames(cfg)
 
-    # Reconstruct the exact bounds write_delta computes.
+    # Reconstruct the exact bounds write_landing computes.
     _end = cfg.end_ts
     _start = _end - pd.Timedelta(days=cfg.span_days)
     expected_start_s = float(int(_start.timestamp()) - 15 * 24 * 3600)
@@ -356,20 +356,20 @@ def test_persisted_bounds_match_label_bounds(spark) -> None:
     )
 
 
-def test_write_delta_consumes_generate_frames_bounds_no_double_now(
+def test_write_landing_consumes_generate_frames_bounds_no_double_now(
     monkeypatch,
 ) -> None:
-    """Production path (end_ts=None): write_delta must persist the EXACT bounds
+    """Production path (end_ts=None): write_landing must persist the EXACT bounds
     that generate_frames used for window_counts_batch — never call now() a second
     time after generate_frames returns.
 
     Strategy: monkeypatch _resolve_end to return a fixed timestamp and assert that
-    the bounds stored in imp.attrs["_session_window"] equal what write_delta would
-    pass to the metadata table. A second independent now() call inside write_delta
+    the bounds stored in imp.attrs["_session_window"] equal what write_landing would
+    pass to the metadata table. A second independent now() call inside write_landing
     would return a DIFFERENT value (simulated by advancing a counter), causing the
     bounds to diverge.
 
-    This test FAILS against round-1 code (which recomputed now() in write_delta)
+    This test FAILS against round-1 code (which recomputed now() in write_landing)
     and passes after this fix (which reads imp.attrs["_session_window"]).
     """
     import pandas as pd
@@ -406,7 +406,7 @@ def test_write_delta_consumes_generate_frames_bounds_no_double_now(
     actual_start_s = sw["window_start_s"]
     actual_end_s = sw["window_end_s"]
 
-    # What round-1 write_delta would have independently recomputed (a second now()):
+    # What round-1 write_landing would have independently recomputed (a second now()):
     _end_round1 = _t1  # second call returns t1, which is t0 + 5s
     _start_round1 = _end_round1 - pd.Timedelta(days=cfg.span_days)
     drifted_start_s = float(int(_start_round1.timestamp()) - 15 * 24 * 3600)

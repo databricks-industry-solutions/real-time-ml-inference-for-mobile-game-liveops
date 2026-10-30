@@ -1,6 +1,8 @@
-"""Job task: generate synthetic Harvest Haven data into Unity Catalog.
+"""Job task: generate synthetic Harvest Haven data and land it as raw files.
 
-Writes players / offers / impressions Delta tables to the project schema. Scale
+Lands impressions and offers as Parquet in the project volume's landing folder; the
+Lakeflow ingest pipeline (pipelines/ingest/) turns them into the refined
+impressions / players / offers tables. Scale
 via env vars so the DAB can produce a genuinely large impression log in prod
 (which is what makes data-parallel GPU training honest) and a small one in dev.
 
@@ -14,29 +16,29 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 from pyspark.sql import SparkSession
 
 from offer_recommender.config import (
-    TABLE_IMPRESSIONS,
-    TABLE_PLAYERS,
+    LANDING_DIR,
     TABLE_SESSION_WINDOW_BOUNDS,
     configure_from_argv,
     get_config,
     get_session_end_ts,
 )
-from offer_recommender.data.generate import GenConfig, write_delta
+from offer_recommender.data.generate import GenConfig, write_landing
 from offer_recommender.logging_config import get_logger
 
 logger = get_logger(__name__)
 
 
 def _data_already_current(spark, uc, config: GenConfig) -> bool:
-    """True when the datasets already exist AND match the requested config.
+    """True when the landed raw files already exist AND match the requested config.
 
     Regenerating on every pipeline run is wasteful (and, because it re-anchors the
     session window, would drift the label away from an already-warmed stream). We
-    skip generation when all output tables are present AND the persisted
+    skip generation when the landing files and the bounds table are present AND the persisted
     session_window_bounds match the requested seed + window-end -- i.e. "the data
     is already in place and fine". Any mismatch (seed change, new session_end_ts,
     missing table) -> regenerate. Set RECO_FORCE_REGEN=true to always regenerate.
@@ -47,15 +49,16 @@ def _data_already_current(spark, uc, config: GenConfig) -> bool:
         )
         return False
 
-    required = (
-        TABLE_PLAYERS,
-        TABLE_IMPRESSIONS,
-        TABLE_SESSION_WINDOW_BOUNDS,
-    )
-    for name in required:
-        if not spark.catalog.tableExists(uc.table(name)):
-            logger.info("Table %s absent -> generating.", uc.table(name))
+    landing = Path(uc.volume_path) / LANDING_DIR
+    for name in ("impressions", "offers"):
+        if not (landing / name).is_dir():
+            logger.info("Landing folder %s absent -> generating.", landing / name)
             return False
+    if not spark.catalog.tableExists(uc.table(TABLE_SESSION_WINDOW_BOUNDS)):
+        logger.info(
+            "Table %s absent -> generating.", uc.table(TABLE_SESSION_WINDOW_BOUNDS)
+        )
+        return False
 
     try:
         # One-row metadata table; .first() reads a single row (no full-table collect).
@@ -82,19 +85,17 @@ def _data_already_current(spark, uc, config: GenConfig) -> bool:
         )
         return False
 
-    n_players = spark.read.table(uc.table(TABLE_PLAYERS)).count()
     logger.info(
-        "Data already current (seed=%d, window_end=%.0f, %d players); skipping "
+        "Landed data already current (seed=%d, window_end=%.0f); skipping "
         "generation. Set RECO_FORCE_REGEN=true to force.",
         config.seed,
         have_end,
-        n_players,
     )
     return True
 
 
 def main() -> None:
-    """Generate and write the datasets to the configured UC schema.
+    """Generate the datasets and land them in the configured UC volume.
 
     Argv layout: [catalog, schema, session_end_ts (optional unix seconds)].
     Idempotent: skips generation when the data is already present and matches the
@@ -118,7 +119,7 @@ def main() -> None:
     )
     if _data_already_current(spark, uc, config):
         return
-    write_delta(spark, uc.catalog, uc.schema, config)
+    write_landing(spark, uc.catalog, uc.schema, uc.volume, config)
 
 
 if __name__ == "__main__":

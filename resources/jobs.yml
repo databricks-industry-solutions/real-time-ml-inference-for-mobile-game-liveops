@@ -4,7 +4,8 @@
 # serverless Spark Connect ML per-model cap by moving to classic -- see
 # jobs/preprocess.py for how it stays under the cap.
 #
-# 1. offer_recommender_pipeline (the daily "hero"): generate data -> preprocess
+# 1. offer_recommender_pipeline (the daily "hero"): land raw data -> Lakeflow
+#    ingest pipeline (raw -> refined tables) -> preprocess
 #    (SparkML fit + transform) -> distributed training
 #    -> publish offline features -> deploy serving.
 #
@@ -32,15 +33,27 @@ resources:
               - ${resources.schemas.offer_recommender_schema.name}
               - ${var.session_end_ts}
 
+        # Lakeflow ingest (resources/ingest.pipeline.yml): Auto Loader picks up the raw
+        # files generate_data landed and publishes the refined impressions, players and
+        # offers tables. full_refresh because every generate_data run lands a full
+        # snapshot of the synthetic data.
+        - task_key: ingest
+          depends_on:
+            - task_key: generate_data
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.offer_recommender_ingest.id}
+            full_refresh: true
+
         # Create the Kafka login SFV + append the backfill DIRECTLY into
         # match_events (record_source='backfill'), so preprocess's streaming PIT
         # join sees real rolling-window history. We do the backfill as a plain
         # synchronous Spark append (NOT the managed StreamBackfillSource MERGE, which
-        # is async + opaque). Sits between generate_data (writes session_window_bounds
-        # + players) and preprocess (reads match_events), so ordering is guaranteed.
+        # is async + opaque). Sits between ingest (publishes the refined players and
+        # impressions; generate_data wrote session_window_bounds) and preprocess
+        # (reads match_events), so ordering is guaranteed.
         - task_key: setup_stream
           depends_on:
-            - task_key: generate_data
+            - task_key: ingest
           environment_key: default
           spark_python_task:
             python_file: ../jobs/setup_stream.py

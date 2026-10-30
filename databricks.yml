@@ -59,6 +59,9 @@ variables:
   login_rate:
     description: "Synthetic logins/sec the producer emits. Endpoints without route optimization are limited to 200 QPS per workspace, so keep it below that unless the ranking endpoint is route-optimized."
     default: "150"
+  warehouse_id:
+    description: "REQUIRED. SQL warehouse ID that creates the metric view and runs the Genie Agent's queries (`databricks warehouses list`)."
+    default: ""
   producer_pause_status:
     description: "PAUSED or UNPAUSED. The event producer is a continuous job: UNPAUSED keeps the live event stream (and its serverless compute) running; `bundle run` on a paused producer is one five-minute run."
     default: "PAUSED"

@@ -1,0 +1,344 @@
+# Natural-language access for the LiveOps / monetization team: a governed UC metric
+# view over `impressions` (created by a SQL task) and a Genie Agent on top of it.
+# The Genie definition is inline (not file_path) so ${var.catalog} and the schema
+# resolve per target; every id-keyed array must stay sorted by id.
+
+resources:
+  jobs:
+    offer_recommender_metric_views:
+      name: "[${bundle.target}] offer-recommender metric views"
+      description: "Creates or replaces the offer_performance_metrics UC metric view."
+      parameters:
+        - name: catalog
+          default: ${var.catalog}
+        - name: schema
+          default: ${resources.schemas.offer_recommender_schema.name}
+      tasks:
+        - task_key: offer_performance_metrics
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: ../jobs/metric_views/offer_performance_metrics.sql
+
+  genie_spaces:
+    offer_performance_genie:
+      title: "Harvest Haven Offer Performance"
+      description: >-
+        Ask how Harvest Haven shop offers perform: impressions, purchases, conversion
+        rate, D7 offer revenue, revenue per impression, paying players and ARPPU by
+        offer, offer type, price tier, country, player segment, tenure and day. For the
+        LiveOps and monetization team deciding which offers to show to whom.
+      warehouse_id: ${var.warehouse_id}
+      # The Genie UI does not list agents stored under the hidden .bundle deploy root.
+      # Immutable: changing it recreates the agent with a new space id.
+      parent_path: /Workspace/Users/${workspace.current_user.userName}
+      serialized_space:
+        version: 2
+        config:
+          sample_questions:
+            - id: a0000000000000000000000000000001
+              question: ["Which offer types drove the most D7 revenue in the last 7 days?"]
+            - id: a0000000000000000000000000000002
+              question: ["Show conversion rate by price tier and player segment"]
+            - id: a0000000000000000000000000000003
+              question: ["Which offers get lots of impressions but rarely convert?"]
+            - id: a0000000000000000000000000000004
+              question: ["What are the top 10 countries by revenue per impression?"]
+            - id: a0000000000000000000000000000005
+              question: ["How did the number of paying players trend day over day?"]
+        data_sources:
+          metric_views:
+            - identifier: ${var.catalog}.${var.schema}.offer_performance_metrics
+              column_configs:
+                - column_name: Country
+                  enable_format_assistance: true
+                  enable_entity_matching: true
+                - column_name: Offer ID
+                  enable_format_assistance: true
+                  enable_entity_matching: true
+                - column_name: Offer Type
+                  enable_format_assistance: true
+                  enable_entity_matching: true
+                - column_name: Player Segment
+                  enable_format_assistance: true
+                  enable_entity_matching: true
+                - column_name: Price Tier
+                  enable_format_assistance: true
+                  enable_entity_matching: true
+                - column_name: Tenure Band
+                  enable_format_assistance: true
+                  enable_entity_matching: true
+        instructions:
+          text_instructions:
+            - id: c0000000000000000000000000000001
+              content:
+                - "## PURPOSE\n"
+                - "- Shop-offer performance for Harvest Haven LiveOps and monetization managers.\n"
+                - "\n"
+                - "## DISAMBIGUATION\n"
+                - "- The impression data covers a fixed historical window. Anchor relative periods (today, yesterday, this week, last 7 days) to the latest Event Date in the data, never to current_date().\n"
+                - "- Revenue means D7 Offer Revenue unless the user names another measure.\n"
+                - "\n"
+                - "## DATA QUALITY NOTES\n"
+                - "- The first and last Event Date are partial days with about half the normal impressions. Call that out in daily trends instead of reporting it as growth or decline.\n"
+                - "\n"
+                - "## Instructions you must follow when providing summaries\n"
+                - "- State the Event Date range the answer covers; with no date filter, that is the full range in the data.\n"
+                - "- Keep rates and shares as fractions between 0 and 1 in SQL, never multiplied by 100. Write them as percentages with one decimal only in the summary text, and money in USD.\n"
+          example_question_sqls:
+            - id: b0000000000000000000000000000001
+              question: ["Which offer types drove the most revenue in the last 7 days?"]
+              usage_guidance: ["Relative periods: anchor on the latest Event Date via a scalar subquery (metric views cannot be joined)."]
+              sql:
+                - >-
+                  SELECT offer_performance_metrics.`Offer Type`,
+                  MEASURE(offer_performance_metrics.`D7 Offer Revenue`) AS d7_revenue,
+                  MEASURE(offer_performance_metrics.`Conversion Rate`) AS conversion_rate
+                  FROM ${var.catalog}.${var.schema}.offer_performance_metrics
+                  WHERE offer_performance_metrics.`Event Date` > date_sub((SELECT
+                  MAX(d.`Event Date`) FROM (SELECT offer_performance_metrics.`Event Date`
+                  FROM ${var.catalog}.${var.schema}.offer_performance_metrics GROUP BY ALL) d), 7)
+                  GROUP BY ALL ORDER BY d7_revenue DESC
+            - id: b0000000000000000000000000000002
+              question: ["Conversion rate by price tier and player segment"]
+              usage_guidance: ["Two-dimension breakdown of a governed ratio."]
+              sql:
+                - >-
+                  SELECT offer_performance_metrics.`Price Tier`,
+                  offer_performance_metrics.`Player Segment`,
+                  MEASURE(offer_performance_metrics.`Impressions`) AS impressions,
+                  MEASURE(offer_performance_metrics.`Conversion Rate`) AS conversion_rate
+                  FROM ${var.catalog}.${var.schema}.offer_performance_metrics
+                  GROUP BY ALL ORDER BY ALL
+            - id: b0000000000000000000000000000003
+              question: ["Which offers get lots of impressions but rarely convert?"]
+              usage_guidance: ["Compare each offer against the overall rate in an outer query; never put a measure in WHERE."]
+              sql:
+                - >-
+                  WITH by_offer AS (SELECT offer_performance_metrics.`Offer ID`,
+                  offer_performance_metrics.`Offer Type`,
+                  offer_performance_metrics.`Price Tier`,
+                  MEASURE(offer_performance_metrics.`Impressions`) AS impressions,
+                  MEASURE(offer_performance_metrics.`Purchases`) AS purchases
+                  FROM ${var.catalog}.${var.schema}.offer_performance_metrics
+                  GROUP BY ALL)
+                  SELECT `Offer ID`, `Offer Type`, `Price Tier`, impressions,
+                  purchases / impressions AS conversion_rate,
+                  SUM(purchases) OVER () / SUM(impressions) OVER () AS overall_conversion_rate,
+                  impressions / SUM(impressions) OVER () AS impression_share
+                  FROM by_offer ORDER BY conversion_rate ASC
+            - id: b0000000000000000000000000000004
+              question: ["Top 10 countries by revenue per impression"]
+              usage_guidance: ["Ranking with ORDER BY a measure alias and LIMIT."]
+              sql:
+                - >-
+                  SELECT offer_performance_metrics.`Country`,
+                  MEASURE(offer_performance_metrics.`Revenue per Impression`) AS revenue_per_impression,
+                  MEASURE(offer_performance_metrics.`Impressions`) AS impressions
+                  FROM ${var.catalog}.${var.schema}.offer_performance_metrics
+                  GROUP BY ALL ORDER BY revenue_per_impression DESC LIMIT 10
+            - id: b0000000000000000000000000000005
+              question: ["How did paying players trend day over day?"]
+              usage_guidance: ["Period-over-period: aggregate by day in a CTE, then LAG in the outer query."]
+              sql:
+                - >-
+                  WITH daily AS (SELECT offer_performance_metrics.`Event Date`,
+                  MEASURE(offer_performance_metrics.`Paying Players`) AS paying_players
+                  FROM ${var.catalog}.${var.schema}.offer_performance_metrics
+                  GROUP BY ALL)
+                  SELECT `Event Date`, paying_players,
+                  paying_players - LAG(paying_players) OVER (ORDER BY `Event Date`) AS change_vs_prior_day
+                  FROM daily ORDER BY `Event Date`
+            - id: b0000000000000000000000000000006
+              question: ["What is ARPPU for whales versus dolphins?"]
+              usage_guidance: ["Filter on a dimension value in WHERE."]
+              sql:
+                - >-
+                  SELECT offer_performance_metrics.`Player Segment`,
+                  MEASURE(offer_performance_metrics.`ARPPU`) AS arppu,
+                  MEASURE(offer_performance_metrics.`Paying Players`) AS paying_players
+                  FROM ${var.catalog}.${var.schema}.offer_performance_metrics
+                  WHERE offer_performance_metrics.`Player Segment` IN ('whale', 'dolphin')
+                  GROUP BY ALL ORDER BY arppu DESC
+        benchmarks:
+          questions:
+            - id: d0000000000000000000000000000001
+              question: ["What was total D7 offer revenue across the whole period?"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT MEASURE(offer_performance_metrics.`D7 Offer Revenue`) AS d7_revenue FROM ${var.catalog}.${var.schema}.offer_performance_metrics"
+            - id: d0000000000000000000000000000002
+              question: ["Which player segment has the highest conversion rate?"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT offer_performance_metrics.`Player Segment`, MEASURE(offer_performance_metrics.`Conversion Rate`) AS conversion_rate FROM ${var.catalog}.${var.schema}.offer_performance_metrics GROUP BY ALL ORDER BY conversion_rate DESC LIMIT 1"
+            - id: d0000000000000000000000000000003
+              question: ["How many players did we reach in Finland?"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT MEASURE(offer_performance_metrics.`Players Reached`) AS players_reached FROM ${var.catalog}.${var.schema}.offer_performance_metrics WHERE offer_performance_metrics.`Country` = 'FI'"
+            - id: d0000000000000000000000000000004
+              question: ["Revenue per impression by tenure band"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT offer_performance_metrics.`Tenure Band`, MEASURE(offer_performance_metrics.`Revenue per Impression`) AS revenue_per_impression FROM ${var.catalog}.${var.schema}.offer_performance_metrics GROUP BY ALL ORDER BY ALL"
+            - id: d0000000000000000000000000000005
+              question: ["Daily purchases for the comeback offers"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT offer_performance_metrics.`Event Date`, MEASURE(offer_performance_metrics.`Purchases`) AS purchases FROM ${var.catalog}.${var.schema}.offer_performance_metrics WHERE offer_performance_metrics.`Offer Type` = 'comeback' GROUP BY ALL ORDER BY ALL"
+            - id: d0000000000000000000000000000006
+              question: ["Which price tier earns the most revenue from whales?"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT offer_performance_metrics.`Price Tier`, MEASURE(offer_performance_metrics.`D7 Offer Revenue`) AS d7_revenue FROM ${var.catalog}.${var.schema}.offer_performance_metrics WHERE offer_performance_metrics.`Player Segment` = 'whale' GROUP BY ALL ORDER BY d7_revenue DESC LIMIT 1"
+            - id: d0000000000000000000000000000007
+              question: ["What share of total D7 revenue came from whales?"]
+              answer:
+                - format: SQL
+                  content:
+                    - "WITH seg AS (SELECT offer_performance_metrics.`Player Segment`, MEASURE(offer_performance_metrics.`D7 Offer Revenue`) AS rev FROM ${var.catalog}.${var.schema}.offer_performance_metrics GROUP BY ALL) SELECT SUM(CASE WHEN `Player Segment` = 'whale' THEN rev END) / SUM(rev) AS whale_revenue_share FROM seg"
+            - id: d0000000000000000000000000000008
+              question: ["Conversion rate for lapsed players by offer type"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT offer_performance_metrics.`Offer Type`, MEASURE(offer_performance_metrics.`Conversion Rate`) AS conversion_rate FROM ${var.catalog}.${var.schema}.offer_performance_metrics WHERE offer_performance_metrics.`Player Segment` = 'lapsed' GROUP BY ALL ORDER BY ALL"
+            - id: d0000000000000000000000000000009
+              question: ["Which country has the lowest conversion rate?"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT offer_performance_metrics.`Country`, MEASURE(offer_performance_metrics.`Conversion Rate`) AS conversion_rate FROM ${var.catalog}.${var.schema}.offer_performance_metrics GROUP BY ALL ORDER BY conversion_rate ASC LIMIT 1"
+            - id: d0000000000000000000000000000010
+              question: ["ARPPU by country, highest first"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT offer_performance_metrics.`Country`, MEASURE(offer_performance_metrics.`ARPPU`) AS arppu FROM ${var.catalog}.${var.schema}.offer_performance_metrics GROUP BY ALL ORDER BY arppu DESC"
+            - id: d0000000000000000000000000000011
+              question: ["How many impressions did the seasonal offer get on 2026-09-20?"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT MEASURE(offer_performance_metrics.`Impressions`) AS impressions FROM ${var.catalog}.${var.schema}.offer_performance_metrics WHERE offer_performance_metrics.`Offer Type` = 'seasonal' AND offer_performance_metrics.`Event Date` = DATE'2026-09-20'"
+            - id: d0000000000000000000000000000012
+              question: ["Revenue per impression for offers priced at $19.99 or more"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT MEASURE(offer_performance_metrics.`Revenue per Impression`) AS revenue_per_impression FROM ${var.catalog}.${var.schema}.offer_performance_metrics WHERE offer_performance_metrics.`Offer Price USD` >= 19.99"
+            - id: d0000000000000000000000000000013
+              question: ["Compare conversion rate of new players versus lapsed players"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT offer_performance_metrics.`Player Segment`, MEASURE(offer_performance_metrics.`Conversion Rate`) AS conversion_rate FROM ${var.catalog}.${var.schema}.offer_performance_metrics WHERE offer_performance_metrics.`Player Segment` IN ('new', 'lapsed') GROUP BY ALL ORDER BY conversion_rate DESC"
+            - id: d0000000000000000000000000000014
+              question: ["Which offer earned the most D7 revenue from dolphins?"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT offer_performance_metrics.`Offer ID`, MEASURE(offer_performance_metrics.`D7 Offer Revenue`) AS d7_revenue FROM ${var.catalog}.${var.schema}.offer_performance_metrics WHERE offer_performance_metrics.`Player Segment` = 'dolphin' GROUP BY ALL ORDER BY d7_revenue DESC LIMIT 1"
+            - id: d0000000000000000000000000000015
+              question: ["Daily D7 revenue in Japan"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT offer_performance_metrics.`Event Date`, MEASURE(offer_performance_metrics.`D7 Offer Revenue`) AS d7_revenue FROM ${var.catalog}.${var.schema}.offer_performance_metrics WHERE offer_performance_metrics.`Country` = 'JP' GROUP BY ALL ORDER BY ALL"
+            - id: d0000000000000000000000000000016
+              question: ["What percentage of players reached became paying players?"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT MEASURE(offer_performance_metrics.`Paying Players`) / MEASURE(offer_performance_metrics.`Players Reached`) AS payer_rate FROM ${var.catalog}.${var.schema}.offer_performance_metrics"
+            - id: d0000000000000000000000000000017
+              question: ["Top 3 offer and player segment combinations by D7 revenue"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT offer_performance_metrics.`Offer ID`, offer_performance_metrics.`Player Segment`, MEASURE(offer_performance_metrics.`D7 Offer Revenue`) AS d7_revenue FROM ${var.catalog}.${var.schema}.offer_performance_metrics GROUP BY ALL ORDER BY d7_revenue DESC LIMIT 3"
+            - id: d0000000000000000000000000000018
+              question: ["Which day had the highest D7 revenue?"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT offer_performance_metrics.`Event Date`, MEASURE(offer_performance_metrics.`D7 Offer Revenue`) AS d7_revenue FROM ${var.catalog}.${var.schema}.offer_performance_metrics GROUP BY ALL ORDER BY d7_revenue DESC LIMIT 1"
+            - id: d0000000000000000000000000000019
+              question: ["Conversion rate by tenure band for whales"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT offer_performance_metrics.`Tenure Band`, MEASURE(offer_performance_metrics.`Conversion Rate`) AS conversion_rate FROM ${var.catalog}.${var.schema}.offer_performance_metrics WHERE offer_performance_metrics.`Player Segment` = 'whale' GROUP BY ALL ORDER BY ALL"
+            - id: d0000000000000000000000000000020
+              question: ["Purchases by price tier in Brazil"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT offer_performance_metrics.`Price Tier`, MEASURE(offer_performance_metrics.`Purchases`) AS purchases FROM ${var.catalog}.${var.schema}.offer_performance_metrics WHERE offer_performance_metrics.`Country` = 'BR' GROUP BY ALL ORDER BY ALL"
+            - id: d0000000000000000000000000000021
+              question: ["Which player segments convert below the overall conversion rate?"]
+              answer:
+                - format: SQL
+                  content:
+                    - "WITH seg AS (SELECT offer_performance_metrics.`Player Segment`, MEASURE(offer_performance_metrics.`Purchases`) AS purchases, MEASURE(offer_performance_metrics.`Impressions`) AS impressions FROM ${var.catalog}.${var.schema}.offer_performance_metrics GROUP BY ALL), rated AS (SELECT `Player Segment`, purchases / impressions AS conversion_rate, SUM(purchases) OVER () / SUM(impressions) OVER () AS overall_rate FROM seg) SELECT `Player Segment`, conversion_rate, overall_rate FROM rated WHERE conversion_rate < overall_rate ORDER BY conversion_rate"
+            - id: d0000000000000000000000000000022
+              question: ["Revenue per impression for comeback offers by price tier"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT offer_performance_metrics.`Price Tier`, MEASURE(offer_performance_metrics.`Revenue per Impression`) AS revenue_per_impression FROM ${var.catalog}.${var.schema}.offer_performance_metrics WHERE offer_performance_metrics.`Offer Type` = 'comeback' GROUP BY ALL ORDER BY ALL"
+            - id: d0000000000000000000000000000023
+              question: ["How many paying players did we have in the US and Canada combined?"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT MEASURE(offer_performance_metrics.`Paying Players`) AS paying_players FROM ${var.catalog}.${var.schema}.offer_performance_metrics WHERE offer_performance_metrics.`Country` IN ('US', 'CA')"
+            - id: d0000000000000000000000000000024
+              question: ["Rank countries by ARPPU for dolphins"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT offer_performance_metrics.`Country`, MEASURE(offer_performance_metrics.`ARPPU`) AS arppu FROM ${var.catalog}.${var.schema}.offer_performance_metrics WHERE offer_performance_metrics.`Player Segment` = 'dolphin' GROUP BY ALL ORDER BY arppu DESC"
+            - id: d0000000000000000000000000000025
+              question: ["What is the conversion rate of offer_003?"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT MEASURE(offer_performance_metrics.`Conversion Rate`) AS conversion_rate FROM ${var.catalog}.${var.schema}.offer_performance_metrics WHERE offer_performance_metrics.`Offer ID` = 'offer_003'"
+            - id: d0000000000000000000000000000026
+              question: ["How much D7 revenue did value offers make from players with more than two years of tenure?"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT MEASURE(offer_performance_metrics.`D7 Offer Revenue`) AS d7_revenue FROM ${var.catalog}.${var.schema}.offer_performance_metrics WHERE offer_performance_metrics.`Offer Type` = 'value' AND offer_performance_metrics.`Tenure Band` = '2+ years'"
+            - id: d0000000000000000000000000000027
+              question: ["Number of players reached per day"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT offer_performance_metrics.`Event Date`, MEASURE(offer_performance_metrics.`Players Reached`) AS players_reached FROM ${var.catalog}.${var.schema}.offer_performance_metrics GROUP BY ALL ORDER BY ALL"
+            - id: d0000000000000000000000000000028
+              question: ["Which price tier has the best revenue per impression for new players?"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT offer_performance_metrics.`Price Tier`, MEASURE(offer_performance_metrics.`Revenue per Impression`) AS revenue_per_impression FROM ${var.catalog}.${var.schema}.offer_performance_metrics WHERE offer_performance_metrics.`Player Segment` = 'new' GROUP BY ALL ORDER BY revenue_per_impression DESC LIMIT 1"
+            - id: d0000000000000000000000000000029
+              question: ["Impressions, purchases and conversion rate for each offer"]
+              answer:
+                - format: SQL
+                  content:
+                    - "SELECT offer_performance_metrics.`Offer ID`, MEASURE(offer_performance_metrics.`Impressions`) AS impressions, MEASURE(offer_performance_metrics.`Purchases`) AS purchases, MEASURE(offer_performance_metrics.`Conversion Rate`) AS conversion_rate FROM ${var.catalog}.${var.schema}.offer_performance_metrics GROUP BY ALL ORDER BY ALL"
+            - id: d0000000000000000000000000000030
+              question: ["What share of impressions went to the $0.99 offer?"]
+              answer:
+                - format: SQL
+                  content:
+                    - "WITH p AS (SELECT offer_performance_metrics.`Offer Price USD`, MEASURE(offer_performance_metrics.`Impressions`) AS impressions FROM ${var.catalog}.${var.schema}.offer_performance_metrics GROUP BY ALL) SELECT SUM(CASE WHEN `Offer Price USD` = 0.99 THEN impressions END) / SUM(impressions) AS impression_share FROM p"

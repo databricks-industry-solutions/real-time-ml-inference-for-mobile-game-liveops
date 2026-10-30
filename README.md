@@ -11,9 +11,9 @@ in. This accelerator builds that loop end to end on Databricks: SparkML fits the
 feature transforms at scale, **Ray Train** trains a multi-head PyTorch ranker on the
 serverless-GPU **Databricks AI Runtime**, the **Feature Store** serves batch and
 streaming features from a Lakebase-backed online store and **Model Serving** plus a
-**Databricks App** score every login live. A **Lakeflow Declarative Pipeline** ingests
-the raw data with Auto Loader, and a **Genie Agent** on a governed metric view answers
-offer-performance questions in plain English.
+**Databricks App** score every login live. A **Lakeflow Spark Declarative Pipelines**
+pipeline ingests the raw data with Auto Loader, and a **Genie Agent** on a governed
+metric view answers offer-performance questions in plain English.
 
 The studio ("Nordfall Games") and its game ("Harvest Haven") are fictional; all data
 is synthetic. The Databricks AI Runtime is in Public Preview; Feature Views (batch,
@@ -29,6 +29,9 @@ streaming and request-time) are generally available.
 - An Azure subscription and the Azure CLI, for the Event Hubs namespace (created by
   `provisioning/provision_eventhub.sh`).
 - A SQL warehouse, which creates the metric view and runs the Genie Agent's queries.
+- The bundle's direct deployment engine, the default for new deployments: the Genie
+  Agent resource is not supported by the Terraform engine, so an existing
+  Terraform-engine deployment has to migrate first.
 
 ## Setup
 
@@ -97,8 +100,8 @@ separately.
 
 1. **Data:** a generator lands synthetic offers and a shop-impression log as raw Parquet
    files in a Unity Catalog volume, with a learnable purchase model whose label depends
-   on recent in-session activity. A Lakeflow Declarative Pipeline ingests them with Auto
-   Loader into bronze tables and publishes the refined `impressions`, `players` and
+   on recent in-session activity. A Lakeflow Spark Declarative Pipelines pipeline ingests
+   them with Auto Loader into bronze tables and publishes the refined `impressions`, `players` and
    `offers` tables, with data-quality expectations, that every later stage reads.
 2. **Preprocessing:** a SparkML `PipelineModel` (log1p, StringIndexer, StandardScaler),
    point-in-time joined with the streaming features. Its fitted parameters are exported

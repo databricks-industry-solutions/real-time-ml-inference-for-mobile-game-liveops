@@ -1,4 +1,4 @@
-# Lakeflow Spark Declarative Pipeline: raw landed files -> refined Unity Catalog
+# Lakeflow Spark Declarative Pipelines: raw landed files -> refined Unity Catalog
 # tables. generate_data lands impressions and offers as Parquet in the project
 # volume; Auto Loader ingests them into bronze streaming tables and the pipeline
 # publishes the refined impressions, players and offers tables (with data-quality

@@ -1,5 +1,6 @@
 # Natural-language access for the LiveOps / monetization team: a governed UC metric
 # view over `impressions` (created by a SQL task) and a Genie Agent on top of it.
+# Genie Agents deploy with the bundle's direct deployment engine only.
 # The Genie definition is inline (not file_path) so ${var.catalog} and the schema
 # resolve per target; every id-keyed array must stay sorted by id.
 
@@ -29,8 +30,8 @@ resources:
         offer, offer type, price tier, country, player segment, tenure and day. For the
         LiveOps and monetization team deciding which offers to show to whom.
       warehouse_id: ${var.warehouse_id}
-      # The Genie UI does not list agents stored under the hidden .bundle deploy root.
-      # Immutable: changing it recreates the agent with a new space id.
+      # The deploying user's home folder rather than the hidden .bundle deploy root, so
+      # the agent is easy to find in the workspace.
       parent_path: /Workspace/Users/${workspace.current_user.userName}
       serialized_space:
         version: 2

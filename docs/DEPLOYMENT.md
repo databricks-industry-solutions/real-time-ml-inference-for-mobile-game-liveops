@@ -71,10 +71,11 @@ SAS key, so re-run `provision_databricks.sh` afterwards.
 ## 2. Deploy (order matters)
 
 The app resource grants `CAN_QUERY` on serving endpoints that only exist after the
-pipeline has run, so a first deploy would fail on the app. On a fresh workspace:
+pipeline has run, and the Genie Agent rejects a metric view that does not exist yet, so a
+first deploy would fail on both. On a fresh workspace:
 
-1. Disable the app and deploy everything else:
-   `mv resources/app.yml resources/app.yml.disabled && databricks bundle deploy`
+1. Disable the app and the Genie Agent, then deploy everything else:
+   `mv resources/app.yml resources/app.yml.disabled && mv resources/genie.yml resources/genie.yml.disabled && databricks bundle deploy`
 2. Run section 1, step 3 (secrets + UC connection), if using Event Hubs.
 3. Start the producer **before** the pipeline on a fresh/empty hub: the Streaming Feature
    View reads from the LATEST offset, so stream setup waits until events arrive. The
@@ -86,12 +87,18 @@ pipeline has run, so a first deploy would fail on the app. On a fresh workspace:
    Keep the variable in `.env`, or later deploys pause the producer again.
 4. Run the pipeline (creates the model and both serving endpoints):
    `databricks bundle run offer_recommender_pipeline`
-5. Re-enable and deploy the app, grant its service principal READ on the secret scope
-   (section 3), then start it:
+5. Re-enable the Genie Agent and create its metric view over `impressions`:
+   `mv resources/genie.yml.disabled resources/genie.yml`
+   `databricks bundle deploy --select jobs.offer_recommender_metric_views`
+   `databricks bundle run offer_recommender_metric_views`
+6. Re-enable and deploy the app (this deploy also creates the Genie Agent), grant its
+   service principal READ on the secret scope (section 3), then start it:
    `mv resources/app.yml.disabled resources/app.yml && databricks bundle deploy`
    `provisioning/provision_databricks.sh --app-sp <service_principal_client_id>`
    `databricks bundle run offer_recommender_console`
-6. Optional, the Ray Tune sweep (not part of the pipeline; needs the pipeline's
+7. Optional, check the Genie Agent end to end:
+   `python jobs/smoke_genie.py <space-id>` (space id from `databricks bundle summary`).
+8. Optional, the Ray Tune sweep (not part of the pipeline; needs the pipeline's
    preprocess output): `databricks bundle run offer_recommender_tune`. It runs 8 ASHA
    trials over the learning rate and embedding width, one `GPU_1xA10` each, four at a
    time. The task log prints `TUNE_BEST` and the run in the

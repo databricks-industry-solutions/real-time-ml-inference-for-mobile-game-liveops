@@ -11,7 +11,9 @@ in. This accelerator builds that loop end to end on Databricks: SparkML fits the
 feature transforms at scale, **Ray Train** trains a multi-head PyTorch ranker on the
 serverless-GPU **Databricks AI Runtime**, the **Feature Store** serves batch and
 streaming features from a Lakebase-backed online store and **Model Serving** plus a
-**Databricks App** score every login live.
+**Databricks App** score every login live. A **Lakeflow Declarative Pipeline** ingests
+the raw data with Auto Loader, and a **Genie Agent** on a governed metric view answers
+offer-performance questions in plain English.
 
 The studio ("Nordfall Games") and its game ("Harvest Haven") are fictional; all data
 is synthetic. The Databricks AI Runtime is in Public Preview; Feature Views (batch,
@@ -26,6 +28,7 @@ streaming and request-time) are generally available.
   later (for the `ai_runtime_task` GPU jobs), [uv](https://docs.astral.sh/uv/) and `jq`.
 - An Azure subscription and the Azure CLI, for the Event Hubs namespace (created by
   `provisioning/provision_eventhub.sh`).
+- A SQL warehouse, which creates the metric view and runs the Genie Agent's queries.
 
 ## Setup
 
@@ -49,29 +52,35 @@ environment take precedence over a target's `variables`, so leave a setting out 
 ### Deploy
 
 A first deploy has a required order. Event Hubs and the UC connection come first, the
-producer must be running before stream setup and the app can only deploy after the
-pipeline has created its serving endpoints. [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+producer must be running before stream setup, and the app and the Genie Agent can only
+deploy after the pipeline has created the serving endpoints and the tables. [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 explains each step:
 
 ```bash
 set -a && source .env && set +a
 provisioning/provision_eventhub.sh                    # Event Hubs namespace + topics
 mv resources/app.yml resources/app.yml.disabled       # the app needs the pipeline's endpoints
+mv resources/genie.yml resources/genie.yml.disabled   # the Genie Agent needs the pipeline's tables
 databricks bundle deploy
 provisioning/provision_databricks.sh                  # secrets + UC Kafka connection
 export BUNDLE_VAR_producer_pause_status=UNPAUSED      # keep it in .env for later deploys
 databricks bundle deploy                              # starts the continuous event producer
 databricks bundle run offer_recommender_pipeline
+mv resources/genie.yml.disabled resources/genie.yml
+databricks bundle deploy --select jobs.offer_recommender_metric_views
+databricks bundle run offer_recommender_metric_views  # the metric view the Genie Agent reads
 mv resources/app.yml.disabled resources/app.yml
-databricks bundle deploy
+databricks bundle deploy                              # also creates the Genie Agent
 # The app's service principal needs READ on the Kafka secret scope (app name: <prefix>-offers-<target>).
 provisioning/provision_databricks.sh --app-sp \
   "$(databricks apps get offer-reco-offers-dev -o json | jq -r .service_principal_client_id)"
 databricks bundle run offer_recommender_console
 ```
 
-The pipeline generates data, sets up the stream, preprocesses, trains on serverless GPU,
-publishes features, registers the model and deploys the serving endpoints.
+The pipeline lands raw data, ingests it through the Lakeflow pipeline, sets up the stream,
+preprocesses, trains on serverless GPU, publishes features, registers the model and
+deploys the serving endpoints. `python jobs/smoke_genie.py <space-id>` then asks the
+Genie Agent its sample questions as an end-to-end check.
 
 The Ray Tune sweep is a separate job that is not part of the pipeline. After the
 pipeline has run, `databricks bundle run offer_recommender_tune` runs 8 ASHA trials
@@ -79,15 +88,18 @@ over the learning rate and embedding width on four A10 GPUs. The best config is 
 to the `offer_recommender_tune` MLflow experiment in your user folder.
 
 `databricks bundle destroy` (or `scripts/cleanup.sh`) removes the bundle-managed
-resources: jobs, app, schema, volume and secret scope. The serving endpoints, the
+resources: jobs, ingest pipeline, Genie Agent, app, schema, volume and secret scope. The serving endpoints, the
 online store, the feature materializations, the UC connection and the Event Hubs
 namespace are created by the pipeline or the provisioning scripts and must be deleted
 separately.
 
 ## Architecture
 
-1. **Data:** synthetic players, offers and a shop-impression log in Unity Catalog, with
-   a learnable purchase model whose label depends on recent in-session activity.
+1. **Data:** a generator lands synthetic offers and a shop-impression log as raw Parquet
+   files in a Unity Catalog volume, with a learnable purchase model whose label depends
+   on recent in-session activity. A Lakeflow Declarative Pipeline ingests them with Auto
+   Loader into bronze tables and publishes the refined `impressions`, `players` and
+   `offers` tables, with data-quality expectations, that every later stage reads.
 2. **Preprocessing:** a SparkML `PipelineModel` (log1p, StringIndexer, StandardScaler),
    point-in-time joined with the streaming features. Its fitted parameters are exported
    and bundled into the model, so serving needs no Spark.
@@ -103,6 +115,9 @@ separately.
    match count, event time) and the candidate offers. A FastAPI + React app consumes the
    login stream and shows a live board of scored decisions with a per-player feature
    drill-down.
+6. **Analytics:** the `offer_performance_metrics` metric view defines conversion rate,
+   D7 offer revenue, revenue per impression and ARPPU once, and the "Harvest Haven Offer
+   Performance" Genie Agent answers questions on it, with example SQL and a benchmark set.
 
 Real-time events come from **Azure Event Hubs** (Kafka protocol): a serverless producer
 job writes synthetic logins and match events. The Streaming Feature View and the app
@@ -120,12 +135,15 @@ path, plus a hashed user ID for `@databricks.com` users only. To turn it off, de
 
 - `src/offer_recommender/`: the ML package (data, preprocessing, model, training,
   features, serving).
-- `jobs/`: job entry points and the AI Runtime workload specs.
+- `pipelines/ingest/`: the Lakeflow ingest pipeline (bronze and refined tables).
+- `jobs/`: job entry points, the AI Runtime workload specs, the metric view SQL and the
+  Genie smoke test.
 - `app/`: the live-inference console (Databricks App).
-- `resources/` + `databricks.yml`: the bundle (schema, jobs, app, secret scope).
+- `resources/` + `databricks.yml`: the bundle (schema, ingest pipeline, jobs, app,
+  secret scope, Genie Agent).
 - `provisioning/`: Event Hubs and UC-connection setup scripts.
-- `tests/`: transform parity, out-of-vocabulary, ranking-quality and serving-artifact
-  guards.
+- `tests/`: transform parity, out-of-vocabulary, ranking-quality, serving-artifact,
+  ingest-pipeline and Genie-definition guards.
 
 ## Local development
 

@@ -237,13 +237,19 @@
     .tab.active { color: var(--accent); border-color: var(--accent-dim); background: rgba(70,227,160,0.08); }
 
     /* Serving Ops dashboard */
-    .ops-row { display: grid; grid-template-columns: 1fr 1.3fr 1.3fr; gap: 20px; margin-bottom: 20px; }
     /* Ingestion (narrow) + Model inference chart (wide). */
-    .ops-row.two { grid-template-columns: 1fr 2.4fr; }
-    @media (max-width: 900px) { .ops-row, .ops-row.two { grid-template-columns: 1fr; } }
+    .ops-row.two { display: grid; grid-template-columns: 1fr 2.4fr; gap: 20px; }
+    @media (max-width: 900px) { .ops-row.two { grid-template-columns: 1fr; } }
+    /* Ingestion card stretches to the chart's height: centre its number and size it
+       to the card's width (container query units). */
+    .ops-panel.ingest { display: flex; flex-direction: column; container-type: inline-size; }
+    .ops-panel.ingest .ops-big { margin-top: auto; justify-content: center; }
+    .ops-panel.ingest .ops-big .big-num { font-size: clamp(2.6rem, 24cqi, 8rem); line-height: 1; }
+    .ops-panel.ingest .ops-big-unit { font-size: clamp(0.8rem, 4cqi, 1.1rem); }
+    .ops-panel.ingest .ops-sub { margin-bottom: auto; text-align: center; }
     /* Model-inference latency chart: p50/p95/p99 on a shared ms y-scale. */
     .lat-chart-wrap { position: relative; margin: 6px 0 12px; }
-    .lat-chart { width: 100%; height: 200px; display: block; }
+    .lat-chart { width: 100%; height: 260px; display: block; }
     .lat-chart-empty { display: flex; align-items: center; justify-content: center;
       color: var(--muted); font-size: 0.8rem; border: 1px dashed var(--border); border-radius: 8px; }
     .lat-yaxis-label { position: absolute; top: 50%; left: -6px; transform: rotate(-90deg) translateX(50%);
@@ -262,22 +268,7 @@
     .ops-big .big-num { font-size: 2.6rem; font-weight: 700; color: var(--accent);
       font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
     .ops-big-unit { font-size: 0.8rem; color: var(--muted); }
-    .ops-stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-    .ops-stat-row.three { grid-template-columns: repeat(3, 1fr); }
-    .spark { width: 100%; display: block; margin: 4px 0 14px; }
-    .spark-empty { display: flex; align-items: center; justify-content: center; height: 100%;
-      font-size: 0.7rem; color: var(--muted); }
-    .ops-stat { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
-      padding: 10px 12px; text-align: center; }
-    .ops-stat-label { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
-    .ops-stat-value { font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 4px; }
-    .ops-stat-value.accent { color: var(--accent); } .ops-stat-value.amber { color: var(--amber); }
-    .ops-stat-unit { font-size: 0.7rem; color: var(--muted); font-weight: 400; margin-left: 2px; }
     .ops-sub { font-size: 0.72rem; color: var(--muted); margin-top: 12px; font-variant-numeric: tabular-nums; }
-    .ops-note { background: linear-gradient(90deg, rgba(92,200,255,0.06), transparent); }
-    .ops-cap { font-size: 0.85rem; color: var(--text); line-height: 1.55; }
-    .ops-cap b { color: var(--accent); }
-    .ops-hint-line { font-size: 0.74rem; color: var(--muted); line-height: 1.5; margin-bottom: 20px; padding: 0 2px; }
   </style>
 </head>
 <body>

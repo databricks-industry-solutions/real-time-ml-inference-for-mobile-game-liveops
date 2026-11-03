@@ -159,8 +159,15 @@ _SCORER_WORKERS = 64
 
 
 async def _score_and_record(login: dict) -> None:
-    """Score one login (async inference) and record it into the global aggregate."""
+    """Score one login (async inference) and record it into the global aggregate.
+
+    A failed or timed-out inference comes back with unscored offers; it is dropped
+    rather than recorded, so the board never shows a login with no recommendation.
+    """
     event = await _rank_event_async(login["player_id"], login)
+    chosen = event["chosen_offer"]
+    if not chosen or chosen.get("expected_offer_revenue") is None:
+        return
     event["source"] = "login-stream"
     aggregate.record(event)
 

@@ -140,6 +140,9 @@ _ASYNC_CLIENT = None
 # endpoint-scoped token is short-lived, so cache it and refresh a bit before expiry.
 _DP_TARGET: tuple[str, str, float] | None = None
 _DP_REFRESH_SKEW_S = 60.0
+# Per-phase (connect/read/write/pool) cap on scorer inference calls; a call that
+# exceeds it degrades to unscored offers instead of stalling a worker.
+_INFERENCE_TIMEOUT_S = 0.8
 
 
 def _async_client():
@@ -164,7 +167,7 @@ def _async_client():
 
         limits = httpx.Limits(max_connections=512, max_keepalive_connections=512)
         _ASYNC_CLIENT = httpx.AsyncClient(
-            http2=True, limits=limits, timeout=httpx.Timeout(30.0, connect=10.0)
+            http2=True, limits=limits, timeout=httpx.Timeout(_INFERENCE_TIMEOUT_S)
         )
     return _ASYNC_CLIENT
 

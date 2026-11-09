@@ -8,13 +8,14 @@ databricks-sdk>=0.40
 # blocking (requests-based), so scoring the login stream through it means one
 # blocked OS thread per in-flight call -- past ~80 threads that thrashes the GIL and
 # STARVES the asyncio event loop (the kafka selector logs "blocking the event loop").
-# httpx.AsyncClient issues the inference POSTs as real coroutines on the loop instead,
-# so hundreds overlap cheaply. The SDK is still used to resolve the route-optimized
-# data-plane URL + mint the endpoint-scoped OAuth token (cached); httpx does the POST.
-httpx[http2]>=0.27
+# aiohttp issues the inference POSTs as real coroutines on the loop instead, so many
+# overlap cheaply; its C HTTP parser costs ~0.4ms CPU per call vs ~1.9ms for httpx
+# (see serving_client._session). The SDK is still used to resolve the route-optimized
+# data-plane URL + mint the endpoint-scoped OAuth token (cached); aiohttp does the POST.
+aiohttp>=3.9,<4
 # uvloop: a Cython/libuv event-loop drop-in that's ~2-4x faster than vanilla asyncio.
 # The scorer is single-event-loop-bound (one Python thread schedules all in-flight
-# httpx calls; throughput plateaued ~450/sec with rising latency as workers grew),
+# HTTP calls; throughput plateaued ~450/sec with rising latency as workers grew),
 # so a faster loop directly lifts that ceiling. uvicorn auto-selects it with
 # `--loop uvloop` (set in app.yaml). Linux-only wheel (fine -- the app runs on Linux).
 uvloop>=0.19

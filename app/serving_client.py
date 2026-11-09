@@ -13,8 +13,12 @@ import datetime
 import logging
 import os
 import time
+from typing import TYPE_CHECKING
 
 import metrics
+
+if TYPE_CHECKING:
+    import aiohttp
 
 logger = logging.getLogger(__name__)
 
@@ -130,46 +134,51 @@ def _apply_predictions(candidate_offers: list[dict], predictions) -> list[dict]:
 # serving_endpoints.query means one blocked OS thread per in-flight call, and past
 # ~80 threads the GIL thrash starves the asyncio event loop (kafka "blocking the
 # event loop" warnings) -- throughput plateaus ~280/sec. So the SCORER fires its
-# inference POSTs with httpx.AsyncClient as real coroutines on the loop; the SDK is
-# used ONLY to resolve the route-optimized data-plane URL + mint the endpoint-scoped
-# OAuth token (both cached below). Route-opt REQUIRES that data-plane URL + a token
-# with authorization_details scoped to the endpoint; a plain workspace token is
-# rejected, so we reuse the SDK's own token source rather than hand-roll it.
-_ASYNC_CLIENT = None
+# inference POSTs with aiohttp as real coroutines on the loop; the SDK is used ONLY
+# to resolve the route-optimized data-plane URL + mint the endpoint-scoped OAuth
+# token (both cached below). Route-opt REQUIRES that data-plane URL + a token with
+# authorization_details scoped to the endpoint; a plain workspace token is rejected,
+# so we reuse the SDK's own token source rather than hand-roll it.
+_SESSION: aiohttp.ClientSession | None = None
 # (url, token, expires_at_epoch) for the route-opt data-plane target. The
 # endpoint-scoped token is short-lived, so cache it and refresh a bit before expiry.
 _DP_TARGET: tuple[str, str, float] | None = None
 _DP_REFRESH_SKEW_S = 60.0
-# Per-phase (connect/read/write/pool) cap on scorer inference calls; a call that
-# exceeds it degrades to unscored offers instead of stalling a worker.
+# Per-phase (connect, read) cap on scorer inference calls; a call that exceeds it
+# degrades to unscored offers instead of stalling a worker.
 _INFERENCE_TIMEOUT_S = 0.8
+# Connection pool: one HTTP/1.1 connection per in-flight call, far above the scorer's
+# 64 workers, kept alive well past the producer's one-second batch interval so
+# connections are reused instead of re-handshaken.
+_POOL_LIMIT = 512
+_KEEPALIVE_S = 60.0
 
 
-def _async_client():
-    """Cached httpx.AsyncClient sized for the scorer's concurrent fan-out.
+def _session() -> aiohttp.ClientSession:
+    """Cached aiohttp session sized for the scorer's concurrent fan-out.
 
-    One long-lived client (per httpx guidance: never create a client per request --
-    it defeats connection pooling). Connection-pool limit set above the scorer's
-    concurrency so no coroutine waits on a connection.
+    aiohttp, not httpx: measured 2026-11-09 in-region with the board's arrival
+    pattern (150 calls launched together each second, 64 in flight), httpx over
+    HTTP/2 spent ~1.9ms of Python CPU per call, so a burst serialized on the one
+    event loop: 106ms p50 for calls the front door answers in ~10ms, plus ~3%
+    HTTP/2 protocol errors. aiohttp (C HTTP parser) spent ~0.4ms per call: 16ms p50,
+    no errors. One long-lived session, created on the running loop at first use.
 
-    http2=True is the key knob for sustained concurrency: over HTTP/1.1, N concurrent
-    requests need N separate TCP+TLS connections, and each TLS handshake is synchronous
-    crypto on the event-loop thread -- at a few hundred new handshakes/sec that
-    serializes the loop (coroutines reach the endpoint in ~15ms but aren't rescheduled
-    to read the response for ~500ms -- the observed client-vs-platform latency gap).
-    Route-optimized serving endpoints speak HTTP/2, which MULTIPLEXES many concurrent
-    requests over a few long-lived connections, so there is no per-request handshake
-    to block the loop. Requires the h2 package (httpx[http2] in requirements.txt).
+    Returns:
+        The shared session.
     """
-    global _ASYNC_CLIENT
-    if _ASYNC_CLIENT is None:
-        import httpx
+    global _SESSION
+    if _SESSION is None:
+        import aiohttp
 
-        limits = httpx.Limits(max_connections=512, max_keepalive_connections=512)
-        _ASYNC_CLIENT = httpx.AsyncClient(
-            http2=True, limits=limits, timeout=httpx.Timeout(_INFERENCE_TIMEOUT_S)
+        connector = aiohttp.TCPConnector(
+            limit=_POOL_LIMIT, keepalive_timeout=_KEEPALIVE_S
         )
-    return _ASYNC_CLIENT
+        timeout = aiohttp.ClientTimeout(
+            sock_connect=_INFERENCE_TIMEOUT_S, sock_read=_INFERENCE_TIMEOUT_S
+        )
+        _SESSION = aiohttp.ClientSession(connector=connector, timeout=timeout)
+    return _SESSION
 
 
 def _data_plane_target() -> tuple[str, str]:
@@ -205,9 +214,9 @@ async def rank_offers_async(
     """Async twin of rank_offers for the high-QPS scorer (coroutine, not a thread).
 
     Same contract as rank_offers -- returns (sorted_offers, query_ms) and degrades
-    to unscored offers on any error -- but issues the inference POST via
-    httpx.AsyncClient so hundreds of calls overlap on the event loop without a thread
-    each. Targets the route-optimized data-plane URL with the endpoint-scoped token.
+    to unscored offers on any error -- but issues the inference POST via aiohttp so
+    many calls overlap on the event loop without a thread each. Targets the
+    route-optimized data-plane URL with the endpoint-scoped token.
     """
     records = _build_records(player_id, candidate_offers, realtime)
     started = time.perf_counter()
@@ -217,17 +226,16 @@ async def rank_offers_async(
         # control-plane call on the loop, but it runs once per token lifetime, not
         # per request; move it to a background task if the stall ever shows up.
         url, token = _data_plane_target()
-        resp = await _async_client().post(
+        async with _session().post(
             url,
             json={"dataframe_records": records},
             headers={"Authorization": token},
-        )
-        if resp.status_code >= 400:
-            logger.warning(
-                "Async serving %s body: %s", resp.status_code, resp.text[:600]
-            )
-        resp.raise_for_status()
-        predictions = resp.json().get("predictions", [])
+        ) as resp:
+            if resp.status >= 400:
+                body = await resp.text()
+                logger.warning("Async serving %s body: %s", resp.status, body[:600])
+            resp.raise_for_status()
+            predictions = (await resp.json()).get("predictions", [])
     except Exception as e:
         logger.warning("Async serving query failed: %s", e)
         return [{**o, "expected_offer_revenue": None} for o in candidate_offers], 0.0

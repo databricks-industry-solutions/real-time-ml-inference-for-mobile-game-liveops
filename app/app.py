@@ -40,11 +40,6 @@ from starlette.responses import Response
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-# httpx logs EVERY request at INFO ("HTTP Request: POST ... 200 OK"). The scorer fires
-# hundreds/sec, which floods the app log + burns stdout I/O on the hot path. Silence it
-# to WARNING (errors still surface); the /api/metrics latency/throughput is the real
-# signal, not per-request log lines.
-logging.getLogger("httpx").setLevel(logging.WARNING)
 
 app = FastAPI(title="Nordfall Offer Recommender")
 
@@ -63,7 +58,7 @@ except Exception as e:
 login_consumer.start()
 
 # Default-loop executor threads. Since the async refactor almost nothing runs here:
-# the inference is an httpx coroutine (loop, no thread), and Kafka is drained by ONE
+# the inference is an aiohttp coroutine (loop, no thread), and Kafka is drained by ONE
 # dedicated bridge thread (see _drain_kafka), not one-thread-per-worker. The executor
 # now only serves the drill-down's sync feature lookup + the metrics scrape (a handful
 # of concurrent request handlers). A small pool suffices; it is NOT a throughput lever
@@ -144,11 +139,11 @@ async def _rank_event_async(player_id: str, realtime: dict | None = None) -> dic
 
 
 # Number of PERSISTENT scorer worker COROUTINES (not threads). Each awaits its
-# inference call via httpx/HTTP2 (rank_offers_async), so N workers overlap N in-flight
+# inference call via aiohttp (rank_offers_async), so N workers overlap N in-flight
 # calls on the single event loop. SIZING (measured on LARGE, 2026-08-01): throughput
 # plateaued at ~450/sec at BOTH 150 and 400 workers -- only LATENCY changed (150 ->
 # 310ms, 400 -> 720ms). That is a single-EVENT-LOOP ceiling (one Python thread juggling
-# all in-flight httpx calls; server-side is 14ms, so the ~450/sec + growing latency is
+# all in-flight HTTP calls; server-side is 14ms, so the ~450/sec + growing latency is
 # loop-scheduling overhead, NOT CPU (load ~0.35 on 8 cores) or the endpoint). So MORE
 # workers = pure in-flight QUEUEING = worse latency, same throughput. Keep it near the
 # knee: ~64 workers x the ~150ms round-trip ~= the loop's ~450/sec ceiling with MINIMAL
@@ -159,8 +154,15 @@ _SCORER_WORKERS = 64
 
 
 async def _score_and_record(login: dict) -> None:
-    """Score one login (async inference) and record it into the global aggregate."""
+    """Score one login (async inference) and record it into the global aggregate.
+
+    A failed or timed-out inference comes back with unscored offers; it is dropped
+    rather than recorded, so the board never shows a login with no recommendation.
+    """
     event = await _rank_event_async(login["player_id"], login)
+    chosen = event["chosen_offer"]
+    if not chosen or chosen.get("expected_offer_revenue") is None:
+        return
     event["source"] = "login-stream"
     aggregate.record(event)
 
@@ -213,7 +215,7 @@ def _drain_kafka(loop: asyncio.AbstractEventLoop, aq: asyncio.Queue) -> None:
 
 async def _scorer_worker(aq: asyncio.Queue) -> None:
     """One scorer coroutine: await a login from the async queue, score it (awaited
-    httpx inference -- no thread), record it, forever. N of these overlap N in-flight
+    aiohttp inference -- no thread), record it, forever. N of these overlap N in-flight
     inference calls cheaply on the one event loop. A slow call stalls only itself;
     the shared bounded queue balances work across all workers. Never dies."""
     while True:
@@ -233,7 +235,7 @@ async def _start_scorer() -> None:
     """Start the Kafka->asyncio bridge (one thread) + the pool of scorer coroutines.
 
     Decoupled producer/consumer: one thread drains Kafka into a bounded asyncio queue;
-    N coroutines await that queue and score via async httpx. Keeps module refs so the
+    N coroutines await that queue and score via aiohttp. Keeps module refs so the
     tasks are not garbage-collected mid-run.
     """
     global _scorer_tasks, _login_aqueue

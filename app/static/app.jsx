@@ -353,19 +353,7 @@ function Detail({ detail }) {
 
 // Serving Ops dashboard: server-side telemetry from /api/metrics. Two panels --
 // event INGESTION (Kafka consume rate) and SERVING observability (the two real
-// endpoint latencies) -- plus a clearly-labeled platform-capability reference so
-// our real (small) live numbers are never conflated with the DAIS ceiling.
-function StatCard({ label, value, unit, accent }) {
-  return (
-    <div className="ops-stat">
-      <div className="ops-stat-label">{label}</div>
-      <div className={"ops-stat-value" + (accent ? " " + accent : "")}>
-        {value}<span className="ops-stat-unit">{unit}</span>
-      </div>
-    </div>
-  );
-}
-
+// endpoint latency).
 // Percentile lines for the latency chart, each its own colour.
 const _LAT_SERIES = [
   { key: "p50", color: "var(--accent)" },
@@ -377,7 +365,7 @@ const _LAT_SERIES = [
 // labelled y-axis (gridlines + tick values) so the magnitudes are readable. `hists`
 // is {p50:[...], p95:[...], p99:[...]} accumulated from the poll. No chart lib.
 function LatencyChart({ hists, height }) {
-  const h = height || 200;
+  const h = height || 260;
   const w = 620; // viewBox width; stretches to container via preserveAspectRatio=none
   const chart = multiSparkChart(
     _LAT_SERIES.map((s) => ({ key: s.key, values: hists[s.key] || [] })),
@@ -424,7 +412,8 @@ function ServingOps({ m, latHist }) {
   // figure the <10ms p99 overhead claim refers to. Minute-bucketed + laggy -> reads 0
   // between traffic; only show it when the histogram has data.
   const plat = (ep && ep.platform && ep.platform.latency_ms) || null;
-  const platReady = plat && (plat.p50 || plat.p90 || plat.p99);
+  // Boolean: a bare `0` from the || chain would render as a stray "0" in the JSX.
+  const platReady = Boolean(plat && (plat.p50 || plat.p90 || plat.p99));
   return (
     <React.Fragment>
       <div className="ops-row two">
@@ -441,6 +430,7 @@ function ServingOps({ m, latHist }) {
             <LatencyChart hists={latHist} />
           </div>
           <div className="lat-legend">
+            <span className="lat-leg-label">client-side</span>
             {_LAT_SERIES.map((s) => (
               <span className="lat-leg" key={s.key}>
                 <span className="lat-swatch" style={{ background: s.color }}></span>
@@ -458,30 +448,6 @@ function ServingOps({ m, latHist }) {
           )}
           {idle && <div className="ops-sub">no inference calls yet</div>}
         </div>
-      </div>
-      <div className="ops-hint-line">
-        The chart + legend are the app's live <b>round-trip</b> latency (p50/p95/p99, measured
-        per call) — it includes the <b>app→workspace network hop + offer-ranker-rt's internal
-        online feature lookup</b>, so ~200-300ms here is dominated by network + FS lookup, not
-        model inference. The <b>server-side</b> row is the platform's own Prometheus histogram
-        (no network hop): that is where the <b>&lt;10ms p99 serving overhead</b> shows up. No
-        separate lookup sub-metric is exposed via the metrics API (the endpoint's monitoring
-        page shows the Model Inference / Feature Lookup / Business Logic split).
-        <br /><b>AI Gateway</b> inference tables are enabled on offer-ranker-rt: every
-        request/response is logged to Unity Catalog for audit.
-      </div>
-      <div className="card ops-note">
-        <h2>Platform capability <span className="agg-hint">reference, not this demo's live load</span></h2>
-        <p className="ops-cap">
-          The same Databricks Model Serving engine reaches <b>300K+ QPS at &lt;10ms p99 latency
-          overhead</b> across CPU &amp; GPU models — no knobs to tune, adapting to each model and
-          its traffic automatically. That &lt;10ms figure is the <b>server-side</b> overhead
-          (the row above), not the round-trip a remote client sees (which adds network + the
-          online feature lookup). Online features are served from the <b>Lakebase</b> online
-          store; real-time features here ride the request (millisecond-fresh). The figures above
-          are THIS demo's modest live traffic; the 300K QPS figure is the platform ceiling this
-          architecture scales to.
-        </p>
       </div>
     </React.Fragment>
   );

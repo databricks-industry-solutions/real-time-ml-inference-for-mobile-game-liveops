@@ -58,8 +58,9 @@ no `*`-unpack in `torch.cat`.
 
 The model is small and does not need multi-node. The only justification for distributed
 GPU is data-parallel throughput over a large impression log. Default is one GPU; frame
-multi-node `GPU_8xH100` as the same Ray code scaling to studio-scale data. AIR is Public
-Preview (the CLI is Beta): never claim GA. Feature Views are GA since 2026-10-12.
+multi-node `GPU_8xH100` as the same Ray code scaling to studio-scale data. AIR is GA since
+2026-10-15 on AWS and Azure (the `air` CLI was Beta; re-check before calling it GA).
+Feature Views are GA since 2026-10-12.
 
 ## Platform gotchas (binding)
 

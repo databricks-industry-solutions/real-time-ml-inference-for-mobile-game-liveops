@@ -15,7 +15,7 @@ set -a && source .env && set +a
 ## Prerequisites
 
 - A Unity Catalog-enabled workspace with **serverless** jobs and Databricks Apps.
-- **Databricks AI Runtime** (serverless GPU, Public Preview) available in your region.
+- **Databricks AI Runtime** (serverless GPU) available in your region.
   Training runs as an `ai_runtime_task` in the Databricks AI environment
   (`databricks_ai_v6`).
 - Databricks CLI 1.6.0 or later (the `ai_runtime_task` job task type), `uv`, `python3`

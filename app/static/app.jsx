@@ -412,7 +412,8 @@ function ServingOps({ m, latHist }) {
   // figure the <10ms p99 overhead claim refers to. Minute-bucketed + laggy -> reads 0
   // between traffic; only show it when the histogram has data.
   const plat = (ep && ep.platform && ep.platform.latency_ms) || null;
-  const platReady = plat && (plat.p50 || plat.p90 || plat.p99);
+  // Boolean: a bare `0` from the || chain would render as a stray "0" in the JSX.
+  const platReady = Boolean(plat && (plat.p50 || plat.p90 || plat.p99));
   return (
     <React.Fragment>
       <div className="ops-row two">
@@ -429,6 +430,7 @@ function ServingOps({ m, latHist }) {
             <LatencyChart hists={latHist} />
           </div>
           <div className="lat-legend">
+            <span className="lat-leg-label">client-side</span>
             {_LAT_SERIES.map((s) => (
               <span className="lat-leg" key={s.key}>
                 <span className="lat-swatch" style={{ background: s.color }}></span>

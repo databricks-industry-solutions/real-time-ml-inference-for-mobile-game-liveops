@@ -212,19 +212,15 @@ async def rank_offers_async(
     records = _build_records(player_id, candidate_offers, realtime)
     started = time.perf_counter()
     try:
-        # STANDARD serving invocations URL, NOT the route-optimized data-plane path:
-        # offer-ranker-rt is NOT route-optimized on this workspace, so the data-plane
-        # query is rejected ("Resource does not support direct Data Plane access").
-        # The standard proxy path works on any endpoint; cfg.authenticate() mints and
-        # refreshes the app-SP bearer. httpx still issues these as coroutines so the
-        # loop is never thread-blocked (the proxy caps ~200 QPS/workspace -- ample for
-        # the board once the producer rate is kept under that).
-        cfg = _client().config
-        url = f"{cfg.host.rstrip('/')}/serving-endpoints/{ENDPOINT_NAME}/invocations"
+        # Route-optimized data-plane URL + endpoint-scoped token (route-opt rejects
+        # the standard workspace URL). ponytail: the token refresh is a blocking
+        # control-plane call on the loop, but it runs once per token lifetime, not
+        # per request; move it to a background task if the stall ever shows up.
+        url, token = _data_plane_target()
         resp = await _async_client().post(
             url,
             json={"dataframe_records": records},
-            headers=cfg.authenticate(),
+            headers={"Authorization": token},
         )
         if resp.status_code >= 400:
             logger.warning(
@@ -257,7 +253,7 @@ def rank_offers(
     records = _build_records(player_id, candidate_offers, realtime)
     started = time.perf_counter()
     try:
-        response = _client().serving_endpoints.query(
+        response = _client().serving_endpoints_data_plane.query(
             name=ENDPOINT_NAME, dataframe_records=records
         )
         predictions = response.predictions

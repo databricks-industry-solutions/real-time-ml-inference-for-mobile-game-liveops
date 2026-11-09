@@ -255,9 +255,11 @@ def deploy_realtime(registered_model: str, version: str, uc: UCConfig) -> None:
     # decisions every ~5s over the trailing 20s (10->10K QPS in <60s), scale-down
     # every ~5min (conservative), vertical per-replica adjust every ~30s. Setting
     # min==max would PIN it and defeat autoscaling, so we set a band.
-    #   min=4: the smallest valid warm floor (concurrency is a multiple of 4) -- keeps
-    #     one pod warm so the interactive board never cold-starts (min>0 is the
-    #     no-cold-start contract), while using almost nothing when the demo is idle.
+    #   min=16: a warm floor (concurrency is a multiple of 4) so the interactive board
+    #     never cold-starts (min>0 is the no-cold-start contract). Measured 2026-11-09 on
+    #     Azure, route-optimized at 150 logins/sec: a floor of 4 never scaled up and 429'd
+    #     ~21% of calls (route-opt has no proxy to queue them), with ~113ms mean server
+    #     latency from in-container queueing. 16 clears the board's in-flight burst.
     #   max=128: a generous ceiling. SIZING (measured 2026-08-01): the endpoint 429s
     #     (bare retry-after, served-model queue backpressure) any in-flight OVER the
     #     current concurrency. By Little's law in_flight = QPS x time_in_system; server
@@ -277,7 +279,7 @@ def deploy_realtime(registered_model: str, version: str, uc: UCConfig) -> None:
     # distinct data-plane URL; the SDK handles both transparently for the app SP).
     entity |= {
         "scale_to_zero_enabled": False,
-        "min_provisioned_concurrency": 4,
+        "min_provisioned_concurrency": 16,
         "max_provisioned_concurrency": 128,
     }
     _deploy_endpoint(ENDPOINT_REALTIME, entity, route_optimized=True)

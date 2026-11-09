@@ -55,7 +55,11 @@ MATCH_RATE = int(
     os.environ.get("RECO_MATCH_RATE", "5000")
 )  # candidates before bursty filter
 BURSTY_FRACTION = float(os.environ.get("RECO_BURSTY_FRACTION", "0.01"))
-RUN_SECONDS = int(os.environ.get("RECO_PRODUCER_RUN_SECONDS", "300"))
+# Each run exits after RUN_SECONDS and the continuous trigger relaunches it. A relaunch
+# (new serverless run + Spark startup) leaves the stream idle for ~45s, which 300s runs
+# turned into a frozen board every ~5.5 min. Runs last a day instead; the trade-off is
+# that a hung run needs a manual cancel rather than recovering at the next relaunch.
+RUN_SECONDS = int(os.environ.get("RECO_PRODUCER_RUN_SECONDS", str(24 * 60 * 60)))
 
 
 def _player_id(num_col):

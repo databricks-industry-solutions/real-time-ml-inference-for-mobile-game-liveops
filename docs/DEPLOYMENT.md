@@ -79,7 +79,8 @@ pipeline has run, so a first deploy would fail on the app. On a fresh workspace:
 3. Start the producer **before** the pipeline on a fresh/empty hub: the Streaming Feature
    View reads from the LATEST offset, so stream setup waits until events arrive. The
    producer is a continuous job: each run emits events for `RECO_PRODUCER_RUN_SECONDS`
-   (300 by default) and the continuous trigger relaunches it while it is unpaused. It
+   (24 hours by default) and the continuous trigger relaunches it while it is unpaused.
+   Each relaunch leaves the stream idle for about 45 seconds while the new run starts. It
    deploys `PAUSED` so an idle install costs nothing. `bundle run` on a paused job
    starts a single run, so unpause it with the bundle variable:
    `export BUNDLE_VAR_producer_pause_status=UNPAUSED && databricks bundle deploy`
